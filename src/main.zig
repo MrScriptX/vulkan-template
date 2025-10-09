@@ -13,7 +13,13 @@ pub fn main() !void {
         return;
     }
     defer c.SDL_DestroyWindow(window);
-    
+
+    const renderer = engine.Renderer.init("Physics Simulation", window.?) catch {
+        std.log.err("Renderer initialization failed", .{});
+        return;
+    };
+    defer renderer.deinit();
+
     var quit = false;
     while (!quit) {
         var event: c.SDL_Event = undefined;
@@ -28,6 +34,5 @@ pub fn main() !void {
 }
 
 const std = @import("std");
-const c = @cImport({
-    @cInclude("SDL3/SDL.h");
-});
+const c = @import("c.zig").c;
+const engine = @import("engine.zig");
