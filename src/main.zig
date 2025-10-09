@@ -14,7 +14,12 @@ pub fn main() !void {
     }
     defer c.SDL_DestroyWindow(window);
 
-    const renderer = engine.Renderer.init("Physics Simulation", window.?) catch {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
+    defer std.log.debug("Memory check : {any}\n", .{ gpa.deinit() });
+
+    const allocator = gpa.allocator();
+
+    const renderer = engine.Renderer.init(allocator, "Physics Simulation", window.?) catch {
         std.log.err("Renderer initialization failed", .{});
         return;
     };

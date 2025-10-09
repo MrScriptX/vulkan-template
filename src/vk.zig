@@ -14,6 +14,16 @@ pub fn createInstance(pCreateInfo: *const c.VkInstanceCreateInfo, pAllocator: ?*
     try check_result(result);
 }
 
+pub fn enumeratePhysicalDevices(instance: c.VkInstance, pPhysicalDeviceCount: [*c]u32, pPhysicalDevices: [*c]c.VkPhysicalDevice) Error!void {
+    const result = c.vkEnumeratePhysicalDevices(instance, pPhysicalDeviceCount, pPhysicalDevices);
+    try check_result(result);
+}
+
+pub fn enumerateDeviceExtensionProperties(physicalDevice: c.VkPhysicalDevice, pLayerName: [*c]const u8, pPropertyCount: [*c]u32, pProperties: [*c]c.VkExtensionProperties) Error!void {
+    const result = c.vkEnumerateDeviceExtensionProperties(physicalDevice, pLayerName, pPropertyCount, pProperties);
+    try check_result(result);
+}
+
 pub fn check_result(result: c.VkResult) Error!void {
     switch (result) {
         c.VK_SUCCESS => return,
