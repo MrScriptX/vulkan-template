@@ -1,7 +1,46 @@
+const Queues = struct {
+    graphic: c.VkQueue,
+    graphic_index: u32,
+
+    compute: ?c.VkQueue = null,
+    compute_index: ?u32 = null,
+
+    pub fn init(device: c.VkDevice, graphic_index: u32, compute_index: ?u32) Queues {
+        const graphic_queue_info = c.VkDeviceQueueInfo2 {
+            .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+            .queueFamilyIndex = graphic_index,
+            .queueIndex = 0
+        };
+
+        var graphic_queue: c.VkQueue = undefined;
+        c.vkGetDeviceQueue2(device, &graphic_queue_info, &graphic_queue);
+
+        var compute_queue: c.VkQueue = undefined;
+        if (compute_index) |index| {
+            const compute_queue_info = c.VkDeviceQueueInfo2 {
+                .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+                .queueFamilyIndex = index,
+                .queueIndex = 0
+            };
+
+            c.vkGetDeviceQueue2(device, &compute_queue_info, &compute_queue);
+        }
+
+        return .{
+            .graphic_index = graphic_index,
+            .graphic = graphic_queue,
+            .compute_index = compute_index,
+            // .compute_queue = compute_queue, // something wrooooong, I can feel it !
+        };
+    }
+};
+
 pub const Renderer = struct {
     instance: c.VkInstance,
     surface: c.VkSurfaceKHR,
     gpu: c.VkPhysicalDevice,
+    device: c.VkDevice,
+    queues: Queues,
 
     pub fn init(allocator: std.mem.Allocator, app_name: []const u8, window: *c.SDL_Window) !Renderer {
         const instance = try create_instance(app_name);
@@ -10,13 +49,25 @@ pub const Renderer = struct {
         const surface = try create_surface(window, instance);
         errdefer c.vkDestroySurfaceKHR(instance, surface, null);
 
-        const gpu = try select_physical_device(allocator, instance);
+        const gpu = try select_physical_device(allocator, instance, surface);
         print_physical_device_info(gpu);
+
+        const queue_indexes = fetch_available_queues(allocator, gpu, surface) catch |err| {
+            std.log.err("Failed to fetch device queues", .{});
+            return err;
+        };
+
+        const device = try create_device(allocator, gpu, queue_indexes.@"0", queue_indexes.@"1");
+        errdefer c.vkDestroyDevice(device, null);
+
+        const queues = Queues.init(device, queue_indexes.@"0", queue_indexes.@"1");
 
         return .{
             .instance = instance,
             .surface = surface,
             .gpu = gpu,
+            .device = device,
+            .queues = queues,
         };
     }
 
@@ -73,7 +124,7 @@ fn create_surface(window: *c.SDL_Window, instance: c.VkInstance) !c.VkSurfaceKHR
     return surface;
 }
 
-fn select_physical_device(allocator: std.mem.Allocator, instance: c.VkInstance) !c.VkPhysicalDevice {
+fn select_physical_device(allocator: std.mem.Allocator, instance: c.VkInstance, surface: c.VkSurfaceKHR) !c.VkPhysicalDevice {
     var device_count: u32 = 0;
     vk.enumeratePhysicalDevices(instance, &device_count, null) catch |err| {
         std.log.err("Failed to enumerate devices : {any}", .{err});
@@ -97,8 +148,9 @@ fn select_physical_device(allocator: std.mem.Allocator, instance: c.VkInstance) 
         const compatibility = check_device_properties(device);
         const features = check_device_features(device);
         const extensions_support = check_device_extensions(allocator, device);
+        const swapchain_support = check_device_swapchain_support(allocator, device, surface);
 
-        if (compatibility and features and extensions_support) {
+        if (compatibility and features and extensions_support and swapchain_support) {
             return device;
         }
     }
@@ -169,22 +221,172 @@ fn check_device_extensions(allocator: std.mem.Allocator, device: c.VkPhysicalDev
     return match_extensions == required_extensions.len;
 }
 
+fn check_device_swapchain_support(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) bool {
+    var formats_count: u32 = 0;
+    vk.getPhysicalDeviceSurfaceFormatsKHR(device, surface, &formats_count, null) catch |err| {
+        std.log.err("Failed to enumerates device supported formats: {any}", .{err});
+        return false;
+    };
+
+    if (formats_count == 0) {
+        std.log.warn("No format found", .{});
+        return false;
+    }
+
+    const formats = allocator.alloc(c.VkSurfaceFormatKHR, formats_count) catch {
+        std.log.err("Out of Memory", .{});
+        return false;
+    };
+    defer allocator.free(formats);
+
+    vk.getPhysicalDeviceSurfaceFormatsKHR(device, surface, &formats_count, formats.ptr) catch |err| {
+        std.log.err("Failed to enumerates device supported formats: {any}", .{err});
+        return false;
+    };
+
+    var present_mode_count: u32 = 0;
+    vk.getPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, null) catch |err| {
+        std.log.err("Failed to enumerate surface present modes : {any}", .{ err });
+        return false;
+    };
+
+    if (present_mode_count == 0) {
+        std.log.warn("No present mode found", .{});
+        return false;
+    }
+
+    const present_modes = allocator.alloc(c.VkPresentModeKHR, present_mode_count) catch {
+        std.log.err("Out of Memory", .{});
+        return false;
+    };
+    defer allocator.free(present_modes);
+
+    vk.getPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, present_modes.ptr) catch |err| {
+        std.log.err("Failed to enumerate surface present modes : {any}", .{ err });
+        return false;
+    };
+
+    return true;
+}
+
+fn fetch_available_queues(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) !struct { u32, ?u32 } {
+    var family_count: u32 = 0;
+    vk.getPhysicalDeviceQueueFamilyProperties2(device, &family_count, null);
+
+    if (family_count == 0) {
+        std.log.err("No queue family found !", .{});
+        return Error.DeviceError;
+    }
+
+    const queue_families = try allocator.alloc(c.VkQueueFamilyProperties2, family_count);
+    defer allocator.free(queue_families);
+
+    vk.getPhysicalDeviceQueueFamilyProperties2(device, &family_count, queue_families.ptr);
+
+    var graphic_queue_index: u32 = 0;
+    var compute_queue_index: ?u32 = null;
+
+    for (queue_families, 0..) |queue_family, index| {
+        if (queue_family.queueFamilyProperties.queueCount > 0) {
+            if (queue_family.queueFamilyProperties.queueFlags & c.VK_QUEUE_GRAPHICS_BIT != 0) {
+                // check presentation support
+                var present_support: c.VkBool32 = c.VK_FALSE;
+                vk.getPhysicalDeviceSurfaceSupportKHR(device, @intCast(index), surface, &present_support) catch |err| {
+                    std.log.warn("An error was raised while checking presentation support : {any}", .{err});
+                    continue;
+                };
+
+                if (present_support == c.VK_TRUE) {
+                    graphic_queue_index = @intCast(index);
+                    continue;
+                }
+            }
+            else if (queue_family.queueFamilyProperties.queueFlags & c.VK_QUEUE_COMPUTE_BIT != 0) {
+                // get compute queue
+                compute_queue_index = @intCast(index);
+                continue;
+            }
+        }
+    }
+
+    return .{
+        graphic_queue_index,
+        compute_queue_index,
+    };
+}
+
+fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevice, graphic_index: u32, compute_index: ?u32) !c.VkDevice {
+
+    var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).empty;
+    defer queue_create_infos.deinit(allocator);
+
+    var queue_priority: f32 = 0.0;
+    const graphic_graphic_queue_create_info = c.VkDeviceQueueCreateInfo {
+        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = graphic_index,
+        .queueCount = 1,
+        .pQueuePriorities = &queue_priority
+    };
+
+    try queue_create_infos.append(allocator, graphic_graphic_queue_create_info);
+
+    if (compute_index) |index| {
+        const compute_queue_create_info = c.VkDeviceQueueCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = index,
+            .queueCount = 1,
+            .pQueuePriorities = &queue_priority
+        };
+
+        try queue_create_infos.append(allocator, compute_queue_create_info);
+    }
+
+    const device_features = c.VkPhysicalDeviceFeatures{
+        .fillModeNonSolid = c.VK_TRUE,
+    };
+
+    const features_vulkan13 = c.VkPhysicalDeviceVulkan13Features {
+        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = @constCast(@ptrCast(&device_features)),
+        // .synchronization2 = c.VK_TRUE,
+        // .dynamicRendering = c.VK_TRUE,
+    };
+
+    const device_create_info = c.VkDeviceCreateInfo {
+        .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = &features_vulkan13,
+        .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
+        .pQueueCreateInfos = queue_create_infos.items.ptr,
+        // .enabledExtensionCount = 1,
+        // .ppEnabledExtensionNames = @ptrCast(&opt.extensions),
+    };
+
+    var device: c.VkDevice = undefined;
+    vk.createDevice(physical_device, &device_create_info, null, &device) catch |err| {
+        std.log.err("Failed to create device : {any}", .{err});
+        return err;
+    };
+
+    return device;
+}
+
 fn print_physical_device_info(device: c.VkPhysicalDevice) void {
     var properties: c.VkPhysicalDeviceProperties2 = .{
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
     };
     c.vkGetPhysicalDeviceProperties2(device, &properties);
 
-    std.log.info("Device Info\nName: {s}\nVendor: {d}\nAPI Version: {d}\n", .{
-        properties.properties.deviceName,
-        properties.properties.vendorID,
-        properties.properties.apiVersion
-    }); 
+    std.log.info("Device Info", .{});
+    std.log.info("Name: {s}", .{ properties.properties.deviceName });
+    std.log.info("Vendor: {d}", .{ properties.properties.vendorID });
+    std.log.info("API Version: {d}", .{ properties.properties.apiVersion });
+    std.log.info("Driver: {d}", .{ properties.properties.driverVersion });
 }
 
 const Error = error {
     SurfaceError,
     NoDevice,
+    DeviceError,
 };
 
 const std = @import("std");

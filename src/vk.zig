@@ -24,6 +24,30 @@ pub fn enumerateDeviceExtensionProperties(physicalDevice: c.VkPhysicalDevice, pL
     try check_result(result);
 }
 
+pub fn getPhysicalDeviceSurfaceFormatsKHR(physicalDevice: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, pSurfaceFormatCount: [*c]u32, pSurfaceFormats: [*c]c.VkSurfaceFormatKHR) Error!void {
+    const result = c.vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, pSurfaceFormatCount, pSurfaceFormats);
+    try check_result(result);
+}
+
+pub fn getPhysicalDeviceSurfacePresentModesKHR(physicalDevice: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, pPresentModeCount: [*c]u32, pPresentModes: [*c]c.VkPresentModeKHR) Error!void {
+    const result = c.vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pPresentModeCount, pPresentModes);
+    try check_result(result);
+}
+
+pub fn getPhysicalDeviceSurfaceSupportKHR(physicalDevice: c.VkPhysicalDevice, queueFamilyIndex: u32, surface: c.VkSurfaceKHR, pSupported: [*c]c.VkBool32) !void {
+    const result = c.vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, queueFamilyIndex, surface, pSupported);
+    try check_result(result);
+}
+
+pub fn getPhysicalDeviceQueueFamilyProperties2(physicalDevice: c.VkPhysicalDevice, pQueueFamilyPropertyCount: [*c]u32, pQueueFamilyProperties: [*c]c.VkQueueFamilyProperties2) void {
+    c.vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, pQueueFamilyPropertyCount, pQueueFamilyProperties);
+}
+
+pub fn createDevice(physicalDevice: c.VkPhysicalDevice, pCreateInfo: [*c]const c.VkDeviceCreateInfo, pAllocator: [*c]const c.VkAllocationCallbacks, pDevice: [*c]c.VkDevice) !void {
+    const result = c.vkCreateDevice(physicalDevice, pCreateInfo, pAllocator, pDevice);
+    try check_result(result);
+}
+
 pub fn check_result(result: c.VkResult) Error!void {
     switch (result) {
         c.VK_SUCCESS => return,
