@@ -35,7 +35,7 @@ const Queues = struct {
 const Swapchain = struct {
     extent: c.VkExtent2D,
 
-    pub fn init(device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, window_extent: c.VkExtent2D) !Swapchain {
+    pub fn init(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, window_extent: c.VkExtent2D) !Swapchain {
         var surface_support: c.VkSurfaceCapabilities2EXT = undefined;
         vk.getPhysicalDeviceSurfaceCapabilities2EXT(device, surface, &surface_support) catch |err| {
             std.log.err("Failed to get surface capabilities : {err}", .{err});
@@ -54,6 +54,27 @@ const Swapchain = struct {
             };
         }
 
+        // fetch available formats
+        var formats_count: u32 = 0;
+        vk.getPhysicalDeviceSurfaceFormatsKHR(device, surface, &formats_count, null) catch |err| {
+            std.log.err("Failed to enumerates device supported formats: {any}", .{err});
+            return false;
+        };
+
+        if (formats_count == 0) {
+            std.log.warn("No format found", .{});
+            return false;
+        }
+
+        const formats = allocator.alloc(c.VkSurfaceFormatKHR, formats_count) catch {
+            std.log.err("Out of Memory", .{});
+            return false;
+        };
+        defer allocator.free(formats);
+
+        // TODO : pick optimal format
+
+
         return .{
             .extent = sw_extent
         };
@@ -71,6 +92,7 @@ pub const Renderer = struct {
     device: c.VkDevice,
     queues: Queues,
     vma: c.VmaAllocator,
+    // swapchain: Swapchain,
 
     extensions: Extensions = .{}, // activated extensions list
     layers: Layers,
@@ -104,7 +126,7 @@ pub const Renderer = struct {
         errdefer c.vmaDestroyAllocator(vma);
 
         // initialize the swapchain
-
+        // const swapchain = Swapchain.init(allocator, gpu, surface, ); // TODO : get window width and height through helper
 
         return .{
             .instance = instance,
