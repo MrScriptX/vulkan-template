@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "univers_simulation",
-        .root_module = exe_mod
+        .root_module = exe_mod,
     });
 
     // Vulkan SDK
@@ -28,6 +28,16 @@ pub fn build(b: *std.Build) void {
     const vk_lib_name = if (target.result.os.tag == .windows) "vulkan-1" else "vulkan";
     exe.linkSystemLibrary(vk_lib_name);
 
+    // VMA
+    exe.addCSourceFile(.{
+        .file = b.path("src/vk_mem_alloc.cpp"),
+        .language = .cpp,
+        .flags = &.{
+            "-Wno-nullability-completeness",
+            "-std=c++17"
+        }
+    });
+
     // SDL3
     const sdl = b.dependency("sdl", .{
         .target = target,
@@ -40,6 +50,7 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("SDL3");
 
     exe.linkLibC();
+    exe.linkLibCpp();
 
     b.installArtifact(exe);
 

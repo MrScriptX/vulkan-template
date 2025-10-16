@@ -38,6 +38,7 @@ pub const Renderer = struct {
     gpu: c.VkPhysicalDevice,
     device: c.VkDevice,
     queues: Queues,
+    vma: c.VmaAllocator = undefined,
 
     extensions: Extensions = .{}, // activated extensions list
     layers: Layers,
@@ -72,6 +73,7 @@ pub const Renderer = struct {
             .gpu = gpu,
             .device = device,
             .queues = queues,
+            
 
             .layers = layers
         };
@@ -364,7 +366,6 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
 
     const features_vulkan13 = c.VkPhysicalDeviceVulkan13Features {
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-        // .pNext = @constCast(@ptrCast(&device_features)),
     };
 
     // layers
@@ -411,6 +412,12 @@ fn create_queue(device: c.VkDevice, family_index: u32) c.VkQueue {
 
     return queue;
 }
+
+// fn create_vma_allocator() c.VmaAllocator {
+//     const vma_allocator_info = c.VmaAllocatorInfo {
+
+//     };
+// }
 
 fn print_physical_device_info(device: c.VkPhysicalDevice) void {
     var properties: c.VkPhysicalDeviceProperties2 = .{
