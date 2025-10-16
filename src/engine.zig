@@ -1,3 +1,11 @@
+const Extensions = struct {
+    
+};
+
+const Layers = struct {
+    VK_LAYER_KHRONOS_validation: bool,
+};
+
 const Queues = struct {
     graphic: c.VkQueue,
     graphic_index: u32,
@@ -6,31 +14,20 @@ const Queues = struct {
     compute_index: ?u32 = null,
 
     pub fn init(device: c.VkDevice, graphic_index: u32, compute_index: ?u32) Queues {
-        const graphic_queue_info = c.VkDeviceQueueInfo2 {
-            .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
-            .queueFamilyIndex = graphic_index,
-            .queueIndex = 0
-        };
+        const graphic_queue: c.VkQueue = create_queue(device, graphic_index);
 
-        var graphic_queue: c.VkQueue = undefined;
-        c.vkGetDeviceQueue2(device, &graphic_queue_info, &graphic_queue);
-
-        var compute_queue: c.VkQueue = undefined;
+        var compute_queue: ?c.VkQueue = null;
         if (compute_index) |index| {
-            const compute_queue_info = c.VkDeviceQueueInfo2 {
-                .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
-                .queueFamilyIndex = index,
-                .queueIndex = 0
-            };
-
-            c.vkGetDeviceQueue2(device, &compute_queue_info, &compute_queue);
+            const queue: c.VkQueue = create_queue(device, index);
+            compute_queue = queue;
         }
 
         return .{
             .graphic_index = graphic_index,
             .graphic = graphic_queue,
+
             .compute_index = compute_index,
-            // .compute_queue = compute_queue, // something wrooooong, I can feel it !
+            .compute = compute_queue,
         };
     }
 };
@@ -42,8 +39,15 @@ pub const Renderer = struct {
     device: c.VkDevice,
     queues: Queues,
 
+    extensions: Extensions = .{}, // activated extensions list
+    layers: Layers,
+
     pub fn init(allocator: std.mem.Allocator, app_name: []const u8, window: *c.SDL_Window) !Renderer {
-        const instance = try create_instance(app_name);
+        const layers = Layers {
+            .VK_LAYER_KHRONOS_validation = true // when debug
+        };
+        
+        const instance = try create_instance(allocator, app_name, layers);
         errdefer c.vkDestroyInstance(instance, null);
 
         const surface = try create_surface(window, instance);
@@ -52,12 +56,12 @@ pub const Renderer = struct {
         const gpu = try select_physical_device(allocator, instance, surface);
         print_physical_device_info(gpu);
 
-        const queue_indexes = fetch_available_queues(allocator, gpu, surface) catch |err| {
+        const queue_indexes = fetch_queue_families(allocator, gpu, surface) catch |err| {
             std.log.err("Failed to fetch device queues", .{});
             return err;
         };
 
-        const device = try create_device(allocator, gpu, queue_indexes.@"0", queue_indexes.@"1");
+        const device = try create_device(allocator, gpu, queue_indexes.@"0", queue_indexes.@"1", layers);
         errdefer c.vkDestroyDevice(device, null);
 
         const queues = Queues.init(device, queue_indexes.@"0", queue_indexes.@"1");
@@ -68,16 +72,19 @@ pub const Renderer = struct {
             .gpu = gpu,
             .device = device,
             .queues = queues,
+
+            .layers = layers
         };
     }
 
     pub fn deinit(self: *const Renderer) void {
+        c.vkDestroyDevice(self.device, null);
         c.vkDestroySurfaceKHR(self.instance, self.surface, null);
         c.vkDestroyInstance(self.instance, null);
     }
 };
 
-fn create_instance(app_name: []const u8) !c.VkInstance {
+fn create_instance(allocator: std.mem.Allocator, app_name: []const u8, layers: Layers) !c.VkInstance {
     const app_info: c.VkApplicationInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .apiVersion = c.VK_MAKE_API_VERSION(0, 1, 4, 0),
@@ -91,15 +98,20 @@ fn create_instance(app_name: []const u8) !c.VkInstance {
     const required_extensions = c.SDL_Vulkan_GetInstanceExtensions(&extension_count);
 
     // layers
-    const layers = [_][]const u8 {
-        "VK_LAYER_KHRONOS_validation"
-    };
+    var layer_names = std.ArrayList([]const u8).empty;
+    defer layer_names.deinit(allocator);
+
+    if (layers.VK_LAYER_KHRONOS_validation) {
+        try layer_names.append(allocator, "VK_LAYER_KHRONOS_validation");
+    }
 
     const instance_info = c.VkInstanceCreateInfo {
         .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
-        .enabledLayerCount = layers.len,
-        .ppEnabledLayerNames = @ptrCast(&layers),
+        
+        .enabledLayerCount = @intCast(layer_names.items.len),
+        .ppEnabledLayerNames = @ptrCast(layer_names.items.ptr),
+        
         .enabledExtensionCount = extension_count,
         .ppEnabledExtensionNames = required_extensions,
     };
@@ -269,26 +281,26 @@ fn check_device_swapchain_support(allocator: std.mem.Allocator, device: c.VkPhys
     return true;
 }
 
-fn fetch_available_queues(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) !struct { u32, ?u32 } {
+fn fetch_queue_families(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) !struct { u32, ?u32 } {
     var family_count: u32 = 0;
-    vk.getPhysicalDeviceQueueFamilyProperties2(device, &family_count, null);
+    vk.getPhysicalDeviceQueueFamilyProperties(device, &family_count, null);
 
     if (family_count == 0) {
         std.log.err("No queue family found !", .{});
         return Error.DeviceError;
     }
 
-    const queue_families = try allocator.alloc(c.VkQueueFamilyProperties2, family_count);
+    const queue_families = try allocator.alloc(c.VkQueueFamilyProperties, family_count);
     defer allocator.free(queue_families);
 
-    vk.getPhysicalDeviceQueueFamilyProperties2(device, &family_count, queue_families.ptr);
+    vk.getPhysicalDeviceQueueFamilyProperties(device, &family_count, queue_families.ptr);
 
     var graphic_queue_index: u32 = 0;
     var compute_queue_index: ?u32 = null;
 
     for (queue_families, 0..) |queue_family, index| {
-        if (queue_family.queueFamilyProperties.queueCount > 0) {
-            if (queue_family.queueFamilyProperties.queueFlags & c.VK_QUEUE_GRAPHICS_BIT != 0) {
+        if (queue_family.queueCount > 0) {
+            if (queue_family.queueFlags & c.VK_QUEUE_GRAPHICS_BIT != 0) {
                 // check presentation support
                 var present_support: c.VkBool32 = c.VK_FALSE;
                 vk.getPhysicalDeviceSurfaceSupportKHR(device, @intCast(index), surface, &present_support) catch |err| {
@@ -301,12 +313,16 @@ fn fetch_available_queues(allocator: std.mem.Allocator, device: c.VkPhysicalDevi
                     continue;
                 }
             }
-            else if (queue_family.queueFamilyProperties.queueFlags & c.VK_QUEUE_COMPUTE_BIT != 0) {
+            else if (queue_family.queueFlags & c.VK_QUEUE_COMPUTE_BIT != 0) {
                 // get compute queue
                 compute_queue_index = @intCast(index);
                 continue;
             }
         }
+    }
+
+    if (graphic_queue_index == compute_queue_index) { // graphic queue should not be the same
+        compute_queue_index = null;
     }
 
     return .{
@@ -315,8 +331,8 @@ fn fetch_available_queues(allocator: std.mem.Allocator, device: c.VkPhysicalDevi
     };
 }
 
-fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevice, graphic_index: u32, compute_index: ?u32) !c.VkDevice {
-
+fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevice, graphic_index: u32, compute_index: ?u32, layers: Layers) !c.VkDevice {
+    // queues info
     var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).empty;
     defer queue_create_infos.deinit(allocator);
 
@@ -341,24 +357,37 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
         try queue_create_infos.append(allocator, compute_queue_create_info);
     }
 
-    const device_features = c.VkPhysicalDeviceFeatures{
+    // device features
+    const device_features = c.VkPhysicalDeviceFeatures {
         .fillModeNonSolid = c.VK_TRUE,
     };
 
     const features_vulkan13 = c.VkPhysicalDeviceVulkan13Features {
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-        .pNext = @constCast(@ptrCast(&device_features)),
-        // .synchronization2 = c.VK_TRUE,
-        // .dynamicRendering = c.VK_TRUE,
+        // .pNext = @constCast(@ptrCast(&device_features)),
     };
+
+    // layers
+    var layer_names = std.ArrayList([]const u8).empty;
+    defer layer_names.deinit(allocator);
+
+    if (layers.VK_LAYER_KHRONOS_validation) {
+        try layer_names.append(allocator, "VK_LAYER_KHRONOS_validation");
+    }
 
     const device_create_info = c.VkDeviceCreateInfo {
         .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = &features_vulkan13,
         .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
         .pQueueCreateInfos = queue_create_infos.items.ptr,
-        // .enabledExtensionCount = 1,
-        // .ppEnabledExtensionNames = @ptrCast(&opt.extensions),
+
+        .enabledExtensionCount = 0,
+        .ppEnabledExtensionNames = null,
+
+        .enabledLayerCount = @intCast(layer_names.items.len),
+        .ppEnabledLayerNames = @ptrCast(layer_names.items.ptr),
+
+        .pEnabledFeatures = &device_features
     };
 
     var device: c.VkDevice = undefined;
@@ -368,6 +397,19 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
     };
 
     return device;
+}
+
+fn create_queue(device: c.VkDevice, family_index: u32) c.VkQueue {
+    const queue_info = c.VkDeviceQueueInfo2 {
+        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+        .queueFamilyIndex = family_index,
+        .queueIndex = 0
+    };
+
+    var queue: c.VkQueue = undefined;
+    c.vkGetDeviceQueue2(device, &queue_info, &queue);
+
+    return queue;
 }
 
 fn print_physical_device_info(device: c.VkPhysicalDevice) void {
