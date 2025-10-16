@@ -52,6 +52,11 @@ pub fn createDevice(physicalDevice: c.VkPhysicalDevice, pCreateInfo: [*c]const c
     try check_result(result);
 }
 
+pub fn vmaCreateAllocator(pCreateInfo: [*c]const c.VmaAllocatorCreateInfo, pAllocator: [*c]c.VmaAllocator) Error!void {
+    const result = c.vmaCreateAllocator(pCreateInfo, pAllocator);
+    try check_result(result);
+}
+
 pub fn check_result(result: c.VkResult) Error!void {
     switch (result) {
         c.VK_SUCCESS => return,

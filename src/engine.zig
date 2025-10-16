@@ -38,7 +38,7 @@ pub const Renderer = struct {
     gpu: c.VkPhysicalDevice,
     device: c.VkDevice,
     queues: Queues,
-    vma: c.VmaAllocator = undefined,
+    vma: c.VmaAllocator,
 
     extensions: Extensions = .{}, // activated extensions list
     layers: Layers,
@@ -48,6 +48,7 @@ pub const Renderer = struct {
             .VK_LAYER_KHRONOS_validation = true // when debug
         };
         
+        // initialize vulkan
         const instance = try create_instance(allocator, app_name, layers);
         errdefer c.vkDestroyInstance(instance, null);
 
@@ -67,19 +68,26 @@ pub const Renderer = struct {
 
         const queues = Queues.init(device, queue_indexes.@"0", queue_indexes.@"1");
 
+        const vma = try create_vma(instance, gpu, device);
+        errdefer c.vmaDestroyAllocator(vma);
+
+        // initialize the swapchain
+        
+
         return .{
             .instance = instance,
             .surface = surface,
             .gpu = gpu,
             .device = device,
             .queues = queues,
-            
+            .vma = vma,
 
             .layers = layers
         };
     }
 
     pub fn deinit(self: *const Renderer) void {
+        c.vmaDestroyAllocator(self.vma);
         c.vkDestroyDevice(self.device, null);
         c.vkDestroySurfaceKHR(self.instance, self.surface, null);
         c.vkDestroyInstance(self.instance, null);
@@ -413,11 +421,23 @@ fn create_queue(device: c.VkDevice, family_index: u32) c.VkQueue {
     return queue;
 }
 
-// fn create_vma_allocator() c.VmaAllocator {
-//     const vma_allocator_info = c.VmaAllocatorInfo {
+fn create_vma(instance: c.VkInstance, physical_device: c.VkPhysicalDevice, device: c.VkDevice) !c.VmaAllocator {
+    const create_allocator_info = c.VmaAllocatorCreateInfo {
+        .instance = instance,
+        .physicalDevice = physical_device,
+        .device = device,
+        .vulkanApiVersion = c.VK_API_VERSION_1_4,
+        .flags = c.VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT
+    };
 
-//     };
-// }
+    var allocator: c.VmaAllocator = undefined;
+    vk.vmaCreateAllocator(&create_allocator_info, &allocator) catch |err| {
+        std.log.err("Failed to create vulkan memory allocator : {any}", .{err});
+        return err;
+    };
+
+    return allocator;
+}
 
 fn print_physical_device_info(device: c.VkPhysicalDevice) void {
     var properties: c.VkPhysicalDeviceProperties2 = .{
