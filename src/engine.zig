@@ -32,6 +32,38 @@ const Queues = struct {
     }
 };
 
+const Swapchain = struct {
+    extent: c.VkExtent2D,
+
+    pub fn init(device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, window_extent: c.VkExtent2D) !Swapchain {
+        var surface_support: c.VkSurfaceCapabilities2EXT = undefined;
+        vk.getPhysicalDeviceSurfaceCapabilities2EXT(device, surface, &surface_support) catch |err| {
+            std.log.err("Failed to get surface capabilities : {err}", .{err});
+            return err;
+        };
+
+        // pick optimal extent
+        var sw_extent = window_extent;
+        if (surface_support.currentExtent.width != std.math.maxInt(u32)) {
+            sw_extent = surface_support.currentExtent;
+        }
+        else {
+            sw_extent = .{
+                .width = std.math.clamp(window_extent.width, surface_support.minImageExtent.width, surface_support.maxImageExtent.width),
+                .height = std.math.clamp(window_extent.height, surface_support.minImageExtent.height, surface_support.maxImageExtent.height)
+            };
+        }
+
+        return .{
+            .extent = sw_extent
+        };
+    }
+
+    pub fn deinit(_: *Swapchain) void {
+
+    }
+};
+
 pub const Renderer = struct {
     instance: c.VkInstance,
     surface: c.VkSurfaceKHR,
@@ -72,7 +104,7 @@ pub const Renderer = struct {
         errdefer c.vmaDestroyAllocator(vma);
 
         // initialize the swapchain
-        
+
 
         return .{
             .instance = instance,

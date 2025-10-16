@@ -57,6 +57,11 @@ pub fn vmaCreateAllocator(pCreateInfo: [*c]const c.VmaAllocatorCreateInfo, pAllo
     try check_result(result);
 }
 
+pub fn getPhysicalDeviceSurfaceCapabilities2EXT(physicalDevice: ?*c.VkPhysicalDevice, surface: ?*c.VkSurfaceKHR, pSurfaceCapabilities: [*c]c.VkSurfaceCapabilities2EXT) Error!void {
+    const result = c.vkGetPhysicalDeviceSurfaceCapabilities2EXT(physicalDevice, surface, pSurfaceCapabilities);
+    try check_result(result);
+}
+
 pub fn check_result(result: c.VkResult) Error!void {
     switch (result) {
         c.VK_SUCCESS => return,
