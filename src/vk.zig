@@ -82,6 +82,26 @@ pub fn createImageView(device: c.VkDevice, pCreateInfo: [*c]const c.VkImageViewC
     try check_result(result);
 }
 
+pub fn createCommandPool(device: c.VkDevice, pCreateInfo: [*c]const c.VkCommandPoolCreateInfo, pAllocator: [*c]const c.VkAllocationCallbacks, pCommandPool: [*c]c.VkCommandPool) Error!void {
+    const result = c.vkCreateCommandPool(device, pCreateInfo, pAllocator, pCommandPool);
+    try check_result(result);
+}
+
+pub fn allocateCommandBuffer(device: c.VkDevice, pAllocateInfo: [*c]const c.VkCommandBufferAllocateInfo, pCommandBuffers: [*c]c.VkCommandBuffer) Error!void {
+    const result = c.vkAllocateCommandBuffers(device, pAllocateInfo, pCommandBuffers);
+    try check_result(result);
+}
+
+pub fn createSemaphore(device: c.VkDevice, pCreateInfo: [*c]const c.VkSemaphoreCreateInfo, pAllocator: [*c]const c.VkAllocationCallbacks, pSemaphore: [*c]c.VkSemaphore) Error!void {
+    const result = c.vkCreateSemaphore(device, pCreateInfo, pAllocator, pSemaphore);
+    try check_result(result);
+}
+
+pub fn createFence(device: c.VkDevice, pCreateInfo: [*c]const c.VkFenceCreateInfo, pAllocator: [*c]const c.VkAllocationCallbacks, pFence: [*c]c.VkFence) Error!void {
+    const result = c.vkCreateFence(device, pCreateInfo, pAllocator, pFence);
+    try check_result(result);
+}
+
 pub fn check_result(result: c.VkResult) Error!void {
     switch (result) {
         c.VK_SUCCESS => return,

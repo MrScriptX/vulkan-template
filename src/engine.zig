@@ -7,6 +7,88 @@ const Layers = struct {
     VK_LAYER_KHRONOS_validation: bool,
 };
 
+const Frame = struct {
+    command_pool: c.VkCommandPool,
+    command_buffer: c.VkCommandBuffer,
+
+    sw_semaphore: c.VkSemaphore,
+    render_semaphore: c.VkSemaphore,
+	render_fence: c.VkFence,
+
+    pub fn init(device: c.VkDevice, queue_family_index: u32) !Frame {
+        const command_pool_create_info = c.VkCommandPoolCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex = queue_family_index,
+        };
+
+        var command_pool: c.VkCommandPool = undefined;
+        vk.createCommandPool(device, command_pool_create_info, null, &command_pool) catch |err| {
+            std.log.err("Failed to create a command pool : {any}", .{err});
+            return err;
+        };
+        errdefer c.vkDestroyCommandPool(device, command_pool, null);
+
+        const command_buffer_info = c.VkCommandBufferAllocateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .command_pool = command_pool,
+            .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1
+        };
+
+        var command_buffer: c.VkCommandBuffer = undefined;
+        vk.allocateCommandBuffer(device, &command_buffer_info, &command_buffer) catch |err| {
+            std.log.err("Failed to allocate frame command buffer : {any}", .{ err });
+            return err;
+        };
+
+        const semaphore_create_info = c.VkSemaphoreCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .flags = 0
+        };
+
+        var sw_semaphore: c.VkSemaphore = undefined;
+        vk.createSemaphore(device, &semaphore_create_info, null, &sw_semaphore) catch |err| {
+            std.log.err("Failed to allocate swapchain semaphore : {any}", .{ err });
+            return err;
+        };
+        errdefer c.vkDestroySemaphore(device, sw_semaphore, null);
+
+        var render_semaphore: c.VkSemaphore = undefined;
+        vk.createSemaphore(device, &semaphore_create_info, null, &render_semaphore) catch |err| {
+            std.log.err("Failed to create render semaphore : {any}", .{ err });
+            return err;
+        };
+        errdefer c.vkDestroySemaphore(device, render_semaphore, null);
+
+        const fence_create_info = c.VkFenceCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = 0
+        };
+
+        var render_fence: c.VkFence = undefined;
+        vk.createFence(device, &fence_create_info, null, &render_fence) catch |err| {
+            std.log.err("Failed to create render fence : {any}", .{err});
+            return err;
+        };
+
+        return .{
+            .command_pool = command_pool,
+            .command_buffer = command_buffer,
+            .sw_semaphore = sw_semaphore,
+            .render_semaphore = render_semaphore,
+            .render_fence = render_fence
+        };
+    }
+
+    pub fn deinit(self: *const Frame, device: c.VkDevice) void {
+        c.vkDestroyFence(device, self.render_fence, null);
+        c.vkDestroySemaphore(device, self.render_semaphore, null);
+        c.vkDestroySemaphore(device, self.sw_semaphore, null);
+        c.vkDestroyCommandPool(device, self.command_pool, null);
+    }
+};
+
 const Queues = struct {
     graphic: c.VkQueue,
     graphic_index: u32,
