@@ -1,5 +1,6 @@
 const Extensions = struct {
-    
+    VK_KHR_swapchain: bool,
+    VK_KHR_synchronization2: bool,
 };
 
 const Layers = struct {
@@ -33,12 +34,18 @@ const Queues = struct {
 };
 
 const Swapchain = struct {
-    extent: c.VkExtent2D,
+    allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, window_extent: c.VkExtent2D) !Swapchain {
-        var surface_support: c.VkSurfaceCapabilities2EXT = undefined;
-        vk.getPhysicalDeviceSurfaceCapabilities2EXT(device, surface, &surface_support) catch |err| {
-            std.log.err("Failed to get surface capabilities : {err}", .{err});
+    extent: c.VkExtent2D,
+    format: c.VkSurfaceFormatKHR,
+    swapchain: c.VkSwapchainKHR,
+    images: []c.VkImage,
+    image_views: []c.VkImageView,
+
+    pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, gpu: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, window_extent: c.VkExtent2D) !Swapchain {
+        var surface_support: c.VkSurfaceCapabilitiesKHR = undefined;
+        vk.getPhysicalDeviceSurfaceCapabilitiesKHR(gpu, surface, &surface_support) catch |err| {
+            std.log.err("Failed to get surface capabilities : {any}", .{err});
             return err;
         };
 
@@ -55,33 +62,174 @@ const Swapchain = struct {
         }
 
         // fetch available formats
+        const surface_format_info = c.VkPhysicalDeviceSurfaceInfo2KHR {
+            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR,
+            .surface = surface
+        };
+
         var formats_count: u32 = 0;
-        vk.getPhysicalDeviceSurfaceFormatsKHR(device, surface, &formats_count, null) catch |err| {
+        vk.getPhysicalDeviceSurfaceFormats2KHR(gpu, &surface_format_info, &formats_count, null) catch |err| {
             std.log.err("Failed to enumerates device supported formats: {any}", .{err});
-            return false;
+            return err;
         };
 
         if (formats_count == 0) {
             std.log.warn("No format found", .{});
-            return false;
+            return Error.NotFound;
         }
 
-        const formats = allocator.alloc(c.VkSurfaceFormatKHR, formats_count) catch {
+        const formats = allocator.alloc(c.VkSurfaceFormat2KHR, formats_count) catch |err| {
             std.log.err("Out of Memory", .{});
-            return false;
+            return err;
         };
         defer allocator.free(formats);
 
-        // TODO : pick optimal format
+        for (formats) |*f| {
+            f.sType = c.VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR;
+            f.pNext = null;
+            f.surfaceFormat = c.VkSurfaceFormatKHR {};
+        }
 
+        vk.getPhysicalDeviceSurfaceFormats2KHR(gpu, &surface_format_info, &formats_count, formats.ptr) catch |err| {
+            std.log.err("Failed to enumerates device supported formats: {any}", .{err});
+            return err;
+        };
+
+        // pick optimal format
+        var format: c.VkSurfaceFormatKHR = undefined;
+        if (formats.len == 1 and formats[0].surfaceFormat.format == c.VK_FORMAT_UNDEFINED) {
+            format = c.VkSurfaceFormatKHR {
+                .format = c.VK_FORMAT_B8G8R8A8_UNORM,
+                .colorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+            };
+        }
+        else {
+            for (formats) |f| {
+                if (f.surfaceFormat.format == c.VK_FORMAT_B8G8R8A8_UNORM and f.surfaceFormat.colorSpace == c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                    format = f.surfaceFormat;
+                }
+            }
+        }
+
+        // fetch available present mode
+        var present_mode_counts: u32 = 0;
+        vk.getPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &present_mode_counts, null) catch |err| {
+            std.log.err("Failed to enumerates device supported formats: {any}", .{err});
+            return err;
+        };
+
+        if (present_mode_counts == 0) {
+            std.log.err("No present modes", .{});
+            return Error.NotFound;
+        }
+
+        const present_modes = allocator.alloc(c.VkPresentModeKHR, present_mode_counts) catch |err| {
+            std.log.err("Out of Memory", .{});
+            return err;
+        };
+        defer allocator.free(present_modes);
+        
+        vk.getPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &present_mode_counts, present_modes.ptr) catch |err| {
+            std.log.err("Failed to enumerates device supported formats: {any}", .{err});
+            return err;
+        };
+
+        // pick a present mode
+        var sw_mode: c.VkPresentModeKHR = c.VK_PRESENT_MODE_FIFO_KHR; // par defaut
+        for (present_modes) |mode| {
+            if (mode == c.VK_PRESENT_MODE_MAILBOX_KHR) { // meilleur mode
+                sw_mode = mode;
+                break;
+            }
+            else if (mode == c.VK_PRESENT_MODE_IMMEDIATE_KHR) { // segond meilleur si disponible
+                sw_mode = mode;
+            }
+        }
+
+        // create the swapchain
+        var image_count: u32 = surface_support.minImageCount + 1;
+        if (surface_support.maxImageCount > 0 and image_count > surface_support.maxImageCount) {
+            image_count = surface_support.maxImageCount;
+        }
+
+        // list queues info
+        const swapchain_create_info = c.VkSwapchainCreateInfoKHR {
+            .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+            .surface = surface,
+            .minImageCount = image_count,
+            .imageFormat = format.format,
+            .imageColorSpace = format.colorSpace,
+            .imageExtent = sw_extent,
+            .imageArrayLayers = 1, // for mulitview/stereo
+            .imageUsage = c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE, // if MODE_CONCURENT, define index count, and familiy index
+            // .queueFamilyIndexCount = 1,
+            // .pQueueFamilyIndices = &.{ queues.graphic_index },
+            .preTransform = surface_support.currentTransform,
+            .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            .presentMode = sw_mode,
+            .clipped = c.VK_TRUE,
+            .oldSwapchain = @ptrCast(c.VK_NULL_HANDLE),
+        };
+
+        var swapchain: c.VkSwapchainKHR = undefined;
+        vk.createSwapchainKHR(device, &swapchain_create_info, null, &swapchain) catch |err| {
+            std.log.err("Failed to create the swapchain : {any}", .{err});
+            return err;
+        };
+        errdefer c.vkDestroySwapchainKHR(device, swapchain, null);
+
+        // get the swapchain images
+        const images = try allocator.alloc(c.VkImage, image_count);
+        errdefer allocator.free(images);
+
+        vk.getSwapchainImagesKHR(device, swapchain, &image_count, images.ptr) catch |err| {
+            std.log.err("Failed to fetch the swapchain images : {any}", .{err});
+            return err;
+        };
+
+        // create image views
+        const image_views = try allocator.alloc(c.VkImageView, image_count);
+        errdefer allocator.free(image_views);
+
+        for (images, 0..) |image, i| {
+            const image_view_create_info = c.VkImageViewCreateInfo {
+                .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = image,
+                .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+                .format = format.format,
+                .subresourceRange = c.VkImageSubresourceRange {
+                    .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                }
+            };
+
+            vk.createImageView(device, &image_view_create_info, null, &image_views[i]) catch |err| {
+                std.log.err("Failed to create image view {d} for {any} : {any}", .{ i, image, err });
+                return err;
+            };
+        }
 
         return .{
-            .extent = sw_extent
+            .allocator = allocator,
+            .extent = sw_extent,
+            .format = format,
+            .swapchain = swapchain,
+            .images = images,
+            .image_views = image_views
         };
     }
 
-    pub fn deinit(_: *Swapchain) void {
-
+    pub fn deinit(self: *const Swapchain, device: c.VkDevice) void {
+        for (self.image_views) |image_view| {
+            c.vkDestroyImageView(device, image_view, null);
+        }
+        self.allocator.free(self.image_views);
+        self.allocator.free(self.images); // on ne destroy pas les images car elles seront détruite par vkDestroySwapchainKHR
+        c.vkDestroySwapchainKHR(device, self.swapchain, null);
     }
 };
 
@@ -92,9 +240,9 @@ pub const Renderer = struct {
     device: c.VkDevice,
     queues: Queues,
     vma: c.VmaAllocator,
-    // swapchain: Swapchain,
+    swapchain: Swapchain,
 
-    extensions: Extensions = .{}, // activated extensions list
+    extensions: Extensions, // activated extensions list
     layers: Layers,
 
     pub fn init(allocator: std.mem.Allocator, app_name: []const u8, window: *c.SDL_Window) !Renderer {
@@ -102,6 +250,11 @@ pub const Renderer = struct {
             .VK_LAYER_KHRONOS_validation = true // when debug
         };
         
+        const extensions = Extensions {
+            .VK_KHR_swapchain = true,
+            .VK_KHR_synchronization2 = false,
+        };
+
         // initialize vulkan
         const instance = try create_instance(allocator, app_name, layers);
         errdefer c.vkDestroyInstance(instance, null);
@@ -109,7 +262,7 @@ pub const Renderer = struct {
         const surface = try create_surface(window, instance);
         errdefer c.vkDestroySurfaceKHR(instance, surface, null);
 
-        const gpu = try select_physical_device(allocator, instance, surface);
+        const gpu = try select_physical_device(allocator, instance, surface, extensions);
         print_physical_device_info(gpu);
 
         const queue_indexes = fetch_queue_families(allocator, gpu, surface) catch |err| {
@@ -117,7 +270,7 @@ pub const Renderer = struct {
             return err;
         };
 
-        const device = try create_device(allocator, gpu, queue_indexes.@"0", queue_indexes.@"1", layers);
+        const device = try create_device(allocator, gpu, queue_indexes.@"0", queue_indexes.@"1", layers, extensions);
         errdefer c.vkDestroyDevice(device, null);
 
         const queues = Queues.init(device, queue_indexes.@"0", queue_indexes.@"1");
@@ -126,7 +279,9 @@ pub const Renderer = struct {
         errdefer c.vmaDestroyAllocator(vma);
 
         // initialize the swapchain
-        // const swapchain = Swapchain.init(allocator, gpu, surface, ); // TODO : get window width and height through helper
+        const window_extent = current_window_extent(window) catch c.VkExtent2D { .width = 400, .height = 400 }; // try with min res
+        const swapchain = try Swapchain.init(allocator, device, gpu, surface, window_extent);
+        errdefer swapchain.deinit(device);
 
         return .{
             .instance = instance,
@@ -135,12 +290,16 @@ pub const Renderer = struct {
             .device = device,
             .queues = queues,
             .vma = vma,
+            .swapchain = swapchain,
 
+            .extensions = extensions,
             .layers = layers
         };
     }
 
     pub fn deinit(self: *const Renderer) void {
+        self.swapchain.deinit(self.device);
+
         c.vmaDestroyAllocator(self.vma);
         c.vkDestroyDevice(self.device, null);
         c.vkDestroySurfaceKHR(self.instance, self.surface, null);
@@ -161,6 +320,14 @@ fn create_instance(allocator: std.mem.Allocator, app_name: []const u8, layers: L
     var extension_count: u32 = 0;
     const required_extensions = c.SDL_Vulkan_GetInstanceExtensions(&extension_count);
 
+    var extensions = std.ArrayList([*c]const u8).empty;
+    defer extensions.deinit(allocator);
+
+    for (0..extension_count, required_extensions) |_, ext| {
+        try extensions.append(allocator, ext);
+    }
+    try extensions.append(allocator, "VK_KHR_get_surface_capabilities2");
+
     // layers
     var layer_names = std.ArrayList([]const u8).empty;
     defer layer_names.deinit(allocator);
@@ -176,8 +343,8 @@ fn create_instance(allocator: std.mem.Allocator, app_name: []const u8, layers: L
         .enabledLayerCount = @intCast(layer_names.items.len),
         .ppEnabledLayerNames = @ptrCast(layer_names.items.ptr),
         
-        .enabledExtensionCount = extension_count,
-        .ppEnabledExtensionNames = required_extensions,
+        .enabledExtensionCount = @intCast(extensions.items.len),
+        .ppEnabledExtensionNames = extensions.items.ptr,
     };
 
     var instance: c.VkInstance = undefined;
@@ -200,7 +367,7 @@ fn create_surface(window: *c.SDL_Window, instance: c.VkInstance) !c.VkSurfaceKHR
     return surface;
 }
 
-fn select_physical_device(allocator: std.mem.Allocator, instance: c.VkInstance, surface: c.VkSurfaceKHR) !c.VkPhysicalDevice {
+fn select_physical_device(allocator: std.mem.Allocator, instance: c.VkInstance, surface: c.VkSurfaceKHR, extensions: Extensions) !c.VkPhysicalDevice {
     var device_count: u32 = 0;
     vk.enumeratePhysicalDevices(instance, &device_count, null) catch |err| {
         std.log.err("Failed to enumerate devices : {any}", .{err});
@@ -223,7 +390,7 @@ fn select_physical_device(allocator: std.mem.Allocator, instance: c.VkInstance, 
     for (devices) |device| {
         const compatibility = check_device_properties(device);
         const features = check_device_features(device);
-        const extensions_support = check_device_extensions(allocator, device);
+        const extensions_support = check_device_extensions(allocator, device, extensions);
         const swapchain_support = check_device_swapchain_support(allocator, device, surface);
 
         if (compatibility and features and extensions_support and swapchain_support) {
@@ -257,7 +424,7 @@ fn check_device_features(device: c.VkPhysicalDevice) bool {
     return true;
 }
 
-fn check_device_extensions(allocator: std.mem.Allocator, device: c.VkPhysicalDevice) bool {
+fn check_device_extensions(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, exts: Extensions) bool {
     var extension_count: u32 = 0;
     vk.enumerateDeviceExtensionProperties(device, null, &extension_count, null) catch |err| {
         std.log.err("Failed to enumerate device extensions : {any}", .{err});
@@ -280,12 +447,18 @@ fn check_device_extensions(allocator: std.mem.Allocator, device: c.VkPhysicalDev
         return false;
     };
 
-    const required_extensions = [_][]const u8 {
-        "VK_KHR_synchronization2"
-    };
+    var required_extensions = std.ArrayList([]const u8).empty;
+    defer required_extensions.deinit(allocator);
+
+    if (exts.VK_KHR_swapchain) {
+        required_extensions.append(allocator, "VK_KHR_swapchain") catch {
+            std.log.err("Memory Allocation failed", .{});
+            return false;
+        };
+    }
 
     var match_extensions: u8 = 0;
-    for (required_extensions) |required| {
+    for (required_extensions.items) |required| {
         for (0..extension_count) |i| {
             const name: [*c]const u8 = @ptrCast(extensions[i].extensionName[0..]);
             if (std.mem.eql(u8, std.mem.span(name), required)) {
@@ -294,7 +467,7 @@ fn check_device_extensions(allocator: std.mem.Allocator, device: c.VkPhysicalDev
         }
     }
 
-    return match_extensions == required_extensions.len;
+    return match_extensions == required_extensions.items.len;
 }
 
 fn check_device_swapchain_support(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) bool {
@@ -395,7 +568,7 @@ fn fetch_queue_families(allocator: std.mem.Allocator, device: c.VkPhysicalDevice
     };
 }
 
-fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevice, graphic_index: u32, compute_index: ?u32, layers: Layers) !c.VkDevice {
+fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevice, graphic_index: u32, compute_index: ?u32, layers: Layers, extensions: Extensions) !c.VkDevice {
     // queues info
     var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).empty;
     defer queue_create_infos.deinit(allocator);
@@ -438,14 +611,22 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
         try layer_names.append(allocator, "VK_LAYER_KHRONOS_validation");
     }
 
+    // extensions
+    var extensions_names = std.ArrayList([]const u8).empty;
+    defer extensions_names.deinit(allocator);
+
+    if (extensions.VK_KHR_swapchain) {
+        try extensions_names.append(allocator, "VK_KHR_swapchain");
+    }
+
     const device_create_info = c.VkDeviceCreateInfo {
         .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = &features_vulkan13,
         .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
         .pQueueCreateInfos = queue_create_infos.items.ptr,
 
-        .enabledExtensionCount = 0,
-        .ppEnabledExtensionNames = null,
+        .enabledExtensionCount = @intCast(extensions_names.items.len),
+        .ppEnabledExtensionNames = @ptrCast(extensions_names.items.ptr),
 
         .enabledLayerCount = @intCast(layer_names.items.len),
         .ppEnabledLayerNames = @ptrCast(layer_names.items.ptr),
@@ -506,10 +687,26 @@ fn print_physical_device_info(device: c.VkPhysicalDevice) void {
     std.log.info("Driver: {d}", .{ properties.properties.driverVersion });
 }
 
+fn current_window_extent(window: *c.SDL_Window) !c.VkExtent2D {
+    var extent: c.VkExtent2D = .{ 
+        .width = 0,
+        .height = 0
+    };
+    const result = c.SDL_GetWindowSize(window, @ptrCast(&extent.width), @ptrCast(&extent.height));
+    if (!result) {
+        std.log.warn("Failed to get window size", .{});
+        return Error.InvalidResult;
+    }
+
+    return extent;
+}
+
 const Error = error {
     SurfaceError,
     NoDevice,
     DeviceError,
+    NotFound,
+    InvalidResult
 };
 
 const std = @import("std");

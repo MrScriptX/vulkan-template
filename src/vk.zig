@@ -29,6 +29,11 @@ pub fn getPhysicalDeviceSurfaceFormatsKHR(physicalDevice: c.VkPhysicalDevice, su
     try check_result(result);
 }
 
+pub fn getPhysicalDeviceSurfaceFormats2KHR(physicalDevice: c.VkPhysicalDevice, pSurfaceInfo: [*c]const c.VkPhysicalDeviceSurfaceInfo2KHR, pSurfaceFormatCount: [*c]u32, pSurfaceFormats: [*c]c.VkSurfaceFormat2KHR) Error!void {
+    const result = c.vkGetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, pSurfaceInfo, pSurfaceFormatCount, pSurfaceFormats);
+    try check_result(result);
+}
+
 pub fn getPhysicalDeviceSurfacePresentModesKHR(physicalDevice: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, pPresentModeCount: [*c]u32, pPresentModes: [*c]c.VkPresentModeKHR) Error!void {
     const result = c.vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pPresentModeCount, pPresentModes);
     try check_result(result);
@@ -57,8 +62,23 @@ pub fn vmaCreateAllocator(pCreateInfo: [*c]const c.VmaAllocatorCreateInfo, pAllo
     try check_result(result);
 }
 
-pub fn getPhysicalDeviceSurfaceCapabilities2EXT(physicalDevice: ?*c.VkPhysicalDevice, surface: ?*c.VkSurfaceKHR, pSurfaceCapabilities: [*c]c.VkSurfaceCapabilities2EXT) Error!void {
-    const result = c.vkGetPhysicalDeviceSurfaceCapabilities2EXT(physicalDevice, surface, pSurfaceCapabilities);
+pub fn getPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, pSurfaceCapabilities: [*c]c.VkSurfaceCapabilitiesKHR) Error!void {
+    const result = c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, pSurfaceCapabilities);
+    try check_result(result);
+}
+
+pub fn createSwapchainKHR(device: c.VkDevice, pCreateInfo: [*c]const c.VkSwapchainCreateInfoKHR, pAllocator: [*c]const c.VkAllocationCallbacks, pSwapchain: [*c]c.VkSwapchainKHR) Error!void {
+    const result = c.vkCreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+    try check_result(result);
+}
+
+pub fn getSwapchainImagesKHR(device: c.VkDevice, swapchain: c.VkSwapchainKHR, pSwapchainImageCount: [*c]u32, pSwapchainImages: [*c]c.VkImage) Error!void {
+    const result = c.vkGetSwapchainImagesKHR(device, swapchain, pSwapchainImageCount, pSwapchainImages);
+    try check_result(result);
+}
+
+pub fn createImageView(device: c.VkDevice, pCreateInfo: [*c]const c.VkImageViewCreateInfo, pAllocator: [*c]const c.VkAllocationCallbacks, pView: [*c]c.VkImageView) Error!void {
+    const result = c.vkCreateImageView(device, pCreateInfo, pAllocator, pView);
     try check_result(result);
 }
 
