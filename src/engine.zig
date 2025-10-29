@@ -16,6 +16,7 @@ const Frame = struct {
 	render_fence: c.VkFence,
 
     pub fn init(device: c.VkDevice, queue_family_index: u32) !Frame {
+        // create the command pool
         const command_pool_create_info = c.VkCommandPoolCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .flags = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -23,15 +24,16 @@ const Frame = struct {
         };
 
         var command_pool: c.VkCommandPool = undefined;
-        vk.createCommandPool(device, command_pool_create_info, null, &command_pool) catch |err| {
+        vk.createCommandPool(device, &command_pool_create_info, null, &command_pool) catch |err| {
             std.log.err("Failed to create a command pool : {any}", .{err});
             return err;
         };
         errdefer c.vkDestroyCommandPool(device, command_pool, null);
 
+        // create the command buffer
         const command_buffer_info = c.VkCommandBufferAllocateInfo {
             .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .command_pool = command_pool,
+            .commandPool = command_pool,
             .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
             .commandBufferCount = 1
         };
@@ -63,7 +65,7 @@ const Frame = struct {
 
         const fence_create_info = c.VkFenceCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .flags = 0
+            .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
         };
 
         var render_fence: c.VkFence = undefined;
@@ -327,6 +329,8 @@ pub const Renderer = struct {
     extensions: Extensions, // activated extensions list
     layers: Layers,
 
+    frames: []Frame,
+
     pub fn init(allocator: std.mem.Allocator, app_name: []const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
             .VK_LAYER_KHRONOS_validation = true // when debug
@@ -334,7 +338,7 @@ pub const Renderer = struct {
         
         const extensions = Extensions {
             .VK_KHR_swapchain = true,
-            .VK_KHR_synchronization2 = false,
+            .VK_KHR_synchronization2 = true,
         };
 
         // initialize vulkan
@@ -365,6 +369,17 @@ pub const Renderer = struct {
         const swapchain = try Swapchain.init(allocator, device, gpu, surface, window_extent);
         errdefer swapchain.deinit(device);
 
+        // initialize the frames
+        const frame_count = swapchain.images.len;
+
+        var frames = try allocator.alloc(Frame, frame_count);
+        errdefer allocator.free(frames);
+
+        for (0..frame_count) |i| {
+            frames[i] = try Frame.init(device, queues.graphic_index);
+        }
+        errdefer for (0..frame_count) |i| frames[i].deinit(device);
+
         return .{
             .instance = instance,
             .surface = surface,
@@ -375,17 +390,159 @@ pub const Renderer = struct {
             .swapchain = swapchain,
 
             .extensions = extensions,
-            .layers = layers
+            .layers = layers,
+
+            .frames = frames,
         };
     }
 
-    pub fn deinit(self: *const Renderer) void {
+    pub fn deinit(self: *const Renderer, allocator: std.mem.Allocator) void {
+        for (0..self.frames.len) |i| {
+            self.frames[i].deinit(self.device);
+        }
+        allocator.free(self.frames);
+
         self.swapchain.deinit(self.device);
 
         c.vmaDestroyAllocator(self.vma);
         c.vkDestroyDevice(self.device, null);
         c.vkDestroySurfaceKHR(self.instance, self.surface, null);
         c.vkDestroyInstance(self.instance, null);
+    }
+
+    pub fn draw(self: *const Renderer, frame_index: u32) !void {
+        const frame = &self.frames[frame_index];
+
+        vk.waitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, std.math.maxInt(u64)) catch |err| {
+            std.log.err("Failed to wait for frame {x} render fence : {any}\n", .{ frame_index, err });
+            return Error.SkipImage;
+        };
+
+        const image_index = self.acquire_next_image(frame) catch {
+            std.log.warn("Failed to acquire next image for frame {x}", .{frame_index});
+            return Error.SkipImage;
+        };
+
+        // start recording draw command
+        const cmd = self.begin_draw_command(frame) catch {
+            std.log.warn("Failed to begin recording draw command for frame {x}...", .{frame_index});
+            return Error.SkipImage;
+        };
+        
+        // draw background
+
+        // draw scene
+
+        // draw engine GUI
+
+        // end recording
+        // submit command buffer
+        self.submit_draw_command(cmd, frame, image_index) catch {
+            std.log.warn("Failed to submit draw command for frame {x}", .{frame_index});
+            return Error.SkipImage;
+        };
+    }
+
+    fn acquire_next_image(self: *const Renderer, frame: *const Frame) !u32 {
+        const acquire_next_image_info = c.VkAcquireNextImageInfoKHR {
+            .sType = c.VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR,
+            .swapchain = self.swapchain.swapchain,
+            .timeout = std.math.maxInt(u64),
+            .semaphore = frame.sw_semaphore,
+            .fence = null,
+            .deviceMask = 1,
+        };
+
+        var image_index: u32 = 0;
+        vk.acquireNextImage2KHR(self.device, &acquire_next_image_info, &image_index) catch |err| {
+            std.log.warn("TODO - handle errors : {any}", .{err});
+            return err;
+        };
+
+        return image_index;
+    }
+
+    fn begin_draw_command(self: *const Renderer, frame: *const Frame) !c.VkCommandBuffer {
+        vk.resetFences(self.device, 1, &frame.render_fence) catch |err| {
+            std.log.warn("Failed to reset frame fence : {any}", .{err});
+            return err;
+        };
+
+        vk.resetCommandBuffer(frame.command_buffer, 0) catch |err| {
+            std.log.warn("Failed to reset command buffer : {any}", .{err});
+            return err;
+        };
+
+        const begin_info = c.VkCommandBufferBeginInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        };
+        vk.beginCommandBuffer(frame.command_buffer, &begin_info) catch |err| {
+            std.log.warn("Failed to begin command buffer : {any}", .{err});
+            return err;
+        };
+
+        return frame.command_buffer;
+    }
+
+    fn submit_draw_command(self: *const Renderer, cmd: c.VkCommandBuffer, frame: *const Frame, image_index: u32) !void {
+        vk.endCommandBuffer(cmd) catch |err| {
+            std.log.err("Failed to end command buffer : {any}", .{err});
+            return err;
+        };
+
+        const command_buffer_submit_info = c.VkCommandBufferSubmitInfo {
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+            .commandBuffer = cmd,
+            .deviceMask = 0
+        };
+
+        const wait_semaphore_info = c.VkSemaphoreSubmitInfo {
+            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = frame.sw_semaphore,
+            .stageMask = c.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
+            .deviceIndex = 0,
+            .value = 1,
+        };
+
+        const signal_semaphore_info = c.VkSemaphoreSubmitInfo {
+            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = frame.render_semaphore,
+            .stageMask = c.VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
+            .deviceIndex = 0,
+            .value = 1,
+        };
+
+        const submit_info = c.VkSubmitInfo2 {
+            .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .flags = 0,
+            .commandBufferInfoCount = 1,
+            .pCommandBufferInfos = &command_buffer_submit_info,
+            .waitSemaphoreInfoCount = 1,
+            .pWaitSemaphoreInfos = &wait_semaphore_info,
+            .signalSemaphoreInfoCount = 1,
+            .pSignalSemaphoreInfos = &signal_semaphore_info,
+        };
+
+        vk.queueSubmit2(self.queues.graphic, 1, &submit_info, frame.render_fence) catch |err| {
+            std.log.err("Failed to submit command buffer : {any}", .{err});
+            return err;
+        };
+
+        const present_info = c.VkPresentInfoKHR {
+            .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &frame.render_semaphore,
+            .swapchainCount = 1,
+            .pSwapchains = &self.swapchain.swapchain,
+            .pImageIndices = &image_index,
+            .pResults = null,
+        };
+
+        vk.queuePresentKHR(self.queues.graphic, &present_info) catch |err| {
+            std.log.err("Failed to present queue : {any}", .{err});
+            return err;
+        };
     }
 };
 
@@ -683,6 +840,7 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
 
     const features_vulkan13 = c.VkPhysicalDeviceVulkan13Features {
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .synchronization2 = if (extensions.VK_KHR_synchronization2) c.VK_TRUE else c.VK_FALSE,
     };
 
     // layers
@@ -694,11 +852,15 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
     }
 
     // extensions
-    var extensions_names = std.ArrayList([]const u8).empty;
+    var extensions_names = std.ArrayList([*c]const u8).empty;
     defer extensions_names.deinit(allocator);
 
     if (extensions.VK_KHR_swapchain) {
         try extensions_names.append(allocator, "VK_KHR_swapchain");
+    }
+
+    if (extensions.VK_KHR_synchronization2) {
+        try extensions_names.append(allocator, "VK_KHR_synchronization2");
     }
 
     const device_create_info = c.VkDeviceCreateInfo {
@@ -788,7 +950,8 @@ const Error = error {
     NoDevice,
     DeviceError,
     NotFound,
-    InvalidResult
+    InvalidResult,
+    SkipImage,
 };
 
 const std = @import("std");

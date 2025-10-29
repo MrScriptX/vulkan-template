@@ -102,6 +102,46 @@ pub fn createFence(device: c.VkDevice, pCreateInfo: [*c]const c.VkFenceCreateInf
     try check_result(result);
 }
 
+pub fn resetFences(device: c.VkDevice, fenceCount: u32, pFences: [*c]const c.VkFence) Error!void {
+    const result = c.vkResetFences(device, fenceCount, pFences);
+    try check_result(result);
+}
+
+pub fn resetCommandBuffer(commandBuffer: c.VkCommandBuffer, flags: c.VkCommandBufferResetFlags) Error!void {
+    const result = c.vkResetCommandBuffer(commandBuffer, flags);
+    try check_result(result);
+}
+
+pub fn beginCommandBuffer(commandBuffer: c.VkCommandBuffer, pBeginInfo: [*c]const c.VkCommandBufferBeginInfo) Error!void {
+    const result = c.vkBeginCommandBuffer(commandBuffer, pBeginInfo);
+    try check_result(result);
+}
+
+pub fn endCommandBuffer(commandBuffer: c.VkCommandBuffer) Error!void {
+    const result = c.vkEndCommandBuffer(commandBuffer);
+    try check_result(result);
+}
+
+pub fn queueSubmit2(queue: c.VkQueue, submitCount: u32, pSubmits: [*c]const c.VkSubmitInfo2, fence: c.VkFence) Error!void {
+    const result = c.vkQueueSubmit2(queue, submitCount, pSubmits, fence);
+    try check_result(result);
+}
+
+pub fn acquireNextImage2KHR(device: c.VkDevice, pAcquireInfo: [*c]const c.VkAcquireNextImageInfoKHR, pImageIndex: [*c]u32) Error!void {
+    const result = c.vkAcquireNextImage2KHR(device, pAcquireInfo, pImageIndex);
+    try check_result(result);
+}
+
+pub fn queuePresentKHR(queue: c.VkQueue, pPresentInfo: [*c]const c.VkPresentInfoKHR) Error!void {
+    const result = c.vkQueuePresentKHR(queue, pPresentInfo);
+    try check_result(result);
+}
+
+pub fn waitForFences(device: c.VkDevice, fenceCount: u32, pFences: [*c]const c.VkFence, waitAll: c.VkBool32, timeout: u64) Error!void {
+    const result = c.vkWaitForFences(device, fenceCount, pFences, waitAll, timeout);
+    try check_result(result);
+}
+
 pub fn check_result(result: c.VkResult) Error!void {
     switch (result) {
         c.VK_SUCCESS => return,

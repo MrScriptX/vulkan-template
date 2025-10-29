@@ -23,7 +23,11 @@ pub fn main() !void {
         std.log.err("Renderer initialization failed", .{});
         return;
     };
-    defer renderer.deinit();
+    defer renderer.deinit(allocator);
+
+    var app: Engine = .{
+        .renderer = &renderer
+    };
 
     var quit = false;
     while (!quit) {
@@ -33,10 +37,25 @@ pub fn main() !void {
                 quit = true;
             }
         }
+
+        app.draw();
     }
 
     return;
 }
+
+const Engine = struct {
+    frame_count: u32 = 0,
+    renderer: *const engine.Renderer,
+
+    pub fn draw(self: *Engine) void {
+        const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
+        self.renderer.draw(frame_index) catch {
+            // TODO handle errors
+        };
+        self.frame_count += 1;
+    }
+};
 
 const std = @import("std");
 const c = @import("c.zig").c;
