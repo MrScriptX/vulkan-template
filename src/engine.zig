@@ -397,6 +397,10 @@ pub const Renderer = struct {
     }
 
     pub fn deinit(self: *const Renderer, allocator: std.mem.Allocator) void {
+        vk.deviceWaitIdle(self.device) catch |err| {
+            std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
+        };
+
         for (0..self.frames.len) |i| {
             self.frames[i].deinit(self.device);
         }
@@ -428,12 +432,20 @@ pub const Renderer = struct {
             std.log.warn("Failed to begin recording draw command for frame {x}...", .{frame_index});
             return Error.SkipImage;
         };
-        
+
         // draw background
 
         // draw scene
 
+        transition_image_layout(cmd, self.swapchain.images[image_index], c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        // copy draw image to swapchain image
+
+        transition_image_layout(cmd, self.swapchain.images[image_index], c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
         // draw engine GUI
+
+        transition_image_layout(cmd, self.swapchain.images[image_index], c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
         // end recording
         // submit command buffer
@@ -943,6 +955,49 @@ fn current_window_extent(window: *c.SDL_Window) !c.VkExtent2D {
     }
 
     return extent;
+}
+
+fn transition_image_layout(cmd: c.VkCommandBuffer, image: c.VkImage, current_layout: c.VkImageLayout, new_layout: c.VkImageLayout) void {
+    const aspect_mask: c.VkImageAspectFlags = if (new_layout == c.VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) c.VK_IMAGE_ASPECT_DEPTH_BIT else c.VK_IMAGE_ASPECT_COLOR_BIT;
+
+	const image_barrier = c.VkImageMemoryBarrier2 {
+		.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+		.pNext = null,
+
+		.srcStageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+		.srcAccessMask = c.VK_ACCESS_2_MEMORY_WRITE_BIT,
+		.dstStageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+		.dstAccessMask = c.VK_ACCESS_2_MEMORY_WRITE_BIT | c.VK_ACCESS_2_MEMORY_READ_BIT,
+
+		.oldLayout = current_layout,
+		.newLayout = new_layout,
+
+		.image = image,
+		.subresourceRange = c.VkImageSubresourceRange {
+		    .aspectMask = aspect_mask,
+		    .baseMipLevel = 0,
+		    .levelCount = c.VK_REMAINING_MIP_LEVELS,
+		    .baseArrayLayer = 0,
+		    .layerCount = c.VK_REMAINING_ARRAY_LAYERS,
+	    },
+	};
+
+	const dep_info = c.VkDependencyInfo {
+		.sType = c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+
+		.pNext = null,
+		
+		.dependencyFlags = 0,
+		.memoryBarrierCount = 0,
+		.pMemoryBarriers = null,
+		.bufferMemoryBarrierCount = 0,
+		.pBufferMemoryBarriers = null,
+		
+		.imageMemoryBarrierCount = 1,
+		.pImageMemoryBarriers = &image_barrier,
+	};
+
+    c.vkCmdPipelineBarrier2(cmd, &dep_info);
 }
 
 const Error = error {

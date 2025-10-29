@@ -142,6 +142,11 @@ pub fn waitForFences(device: c.VkDevice, fenceCount: u32, pFences: [*c]const c.V
     try check_result(result);
 }
 
+pub fn deviceWaitIdle(device: c.VkDevice) Error!void {
+    const result = c.vkDeviceWaitIdle(device);
+    try check_result(result);
+}
+
 pub fn check_result(result: c.VkResult) Error!void {
     switch (result) {
         c.VK_SUCCESS => return,
