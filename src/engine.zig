@@ -7,6 +7,73 @@ const Layers = struct {
     VK_LAYER_KHRONOS_validation: bool,
 };
 
+const Image = struct {
+    allocation: c.VmaAllocation,
+    image: c.VkImage,
+    image_view: c.VkImageView,
+    extent: c.VkExtent3D,
+
+    pub fn init(allocator: c.VmaAllocator, device: c.VkDevice, format: c.VkFormat, extent: c.VkExtent3D, usage: c.VkImageUsageFlags, aspect_mask: c.VkImageAspectFlags) !Image {
+        const image_create_info = c.VkImageCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = c.VK_IMAGE_TYPE_2D,
+            .format = format,
+            .extent = extent,
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = c.VK_SAMPLE_COUNT_1_BIT, //for MSAA. we will not be using it by default, so default it to 1 sample per pixel.
+            .tiling = c.VK_IMAGE_TILING_OPTIMAL, // optimal tiling, which means the image is stored on the best gpu format
+            .usage = usage,
+        };
+
+        const alloc_create_info = c.VmaAllocationCreateInfo {
+            .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        };
+
+        var allocation: c.VmaAllocation = undefined;
+        var image: c.VkImage = undefined;
+        vk.vmaCreateImage(allocator, &image_create_info, &alloc_create_info, &image, &allocation, null) catch |err| {
+            std.log.err("Failed to create image : {any}", .{err});
+            return err;
+        };
+        errdefer c.vmaDestroyImage(allocator, image, allocation);
+
+        const image_view_create_info = c.VkImageViewCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+            .image = image,
+            .format = format,
+            .subresourceRange = c.VkImageSubresourceRange {
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+                .aspectMask = aspect_mask,
+            }
+        };
+
+        var image_view: c.VkImageView = undefined;
+        vk.createImageView(device, &image_view_create_info, null, &image_view) catch |err| {
+            std.log.err("Failed to create image view : {any}", .{err});
+            return err;
+        };
+        errdefer c.vkDestroyImageView(device, image_view, null);
+
+        return .{
+            .allocation = allocation,
+            .image = image,
+            .image_view = image_view,
+            .extent = extent,
+        };
+    }
+
+    pub fn deinit(self: *const Image, device: c.VkDevice, allocator: c.VmaAllocator) void {
+        c.vkDestroyImageView(device, self.image_view, null);
+        c.vmaDestroyImage(allocator, self.image, self.allocation);
+    }
+};
+
 const Frame = struct {
     command_pool: c.VkCommandPool,
     command_buffer: c.VkCommandBuffer,
@@ -331,6 +398,9 @@ pub const Renderer = struct {
 
     frames: []Frame,
 
+    render_image: Image, // image use to record scene command
+    depth_image: Image,
+
     pub fn init(allocator: std.mem.Allocator, app_name: []const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
             .VK_LAYER_KHRONOS_validation = true // when debug
@@ -380,6 +450,24 @@ pub const Renderer = struct {
         }
         errdefer for (0..frame_count) |i| frames[i].deinit(device);
 
+        // create the render images
+        const render_extent = c.VkExtent3D {
+            .width = swapchain.extent.width,
+            .height = swapchain.extent.height,
+            .depth = 1
+        };
+
+        const render_image_usage = c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_STORAGE_BIT | c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        
+        const render_image = Image.init(vma, device, c.VK_FORMAT_R16G16B16A16_SFLOAT, render_extent, render_image_usage, c.VK_IMAGE_ASPECT_COLOR_BIT) catch |err| {
+            std.log.err("Failed to create render image", .{});
+            return err;
+        };
+        errdefer render_image.deinit(device, vma);
+
+        const depth_image = try Image.init(vma, device, c.VK_FORMAT_D32_SFLOAT, render_extent, c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, c.VK_IMAGE_ASPECT_DEPTH_BIT);
+        errdefer depth_image.deinit(device, vma);
+
         return .{
             .instance = instance,
             .surface = surface,
@@ -393,6 +481,8 @@ pub const Renderer = struct {
             .layers = layers,
 
             .frames = frames,
+            .render_image = render_image,
+            .depth_image = depth_image,
         };
     }
 
@@ -400,6 +490,9 @@ pub const Renderer = struct {
         vk.deviceWaitIdle(self.device) catch |err| {
             std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
         };
+
+        self.depth_image.deinit(self.device, self.vma);
+        self.render_image.deinit(self.device, self.vma);
 
         for (0..self.frames.len) |i| {
             self.frames[i].deinit(self.device);
@@ -433,13 +526,26 @@ pub const Renderer = struct {
             return Error.SkipImage;
         };
 
+        transition_image_layout(cmd, self.render_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_GENERAL);
+
         // draw background
+
+        transition_image_layout(cmd, self.render_image.image, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        transition_image_layout(cmd, self.depth_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
         // draw scene
 
-        transition_image_layout(cmd, self.swapchain.images[image_index], c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        transition_image_layout(cmd, self.render_image.image, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
 
         // copy draw image to swapchain image
+        transition_image_layout(cmd, self.swapchain.images[image_index], c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        const render_image_extent = c.VkExtent2D {
+            .width = self.render_image.extent.width,
+            .height = self.render_image.extent.height,
+        };
+        blit_image(cmd, self.render_image.image, self.swapchain.images[image_index], render_image_extent, self.swapchain.extent);
 
         transition_image_layout(cmd, self.swapchain.images[image_index], c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
@@ -850,8 +956,14 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
         .fillModeNonSolid = c.VK_TRUE,
     };
 
+    const features_vulkan12 = c.VkPhysicalDeviceVulkan12Features {
+        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .bufferDeviceAddress = c.VK_TRUE,
+    };
+
     const features_vulkan13 = c.VkPhysicalDeviceVulkan13Features {
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = @constCast(@ptrCast(&features_vulkan12)),
         .synchronization2 = if (extensions.VK_KHR_synchronization2) c.VK_TRUE else c.VK_FALSE,
     };
 
@@ -998,6 +1110,64 @@ fn transition_image_layout(cmd: c.VkCommandBuffer, image: c.VkImage, current_lay
 	};
 
     c.vkCmdPipelineBarrier2(cmd, &dep_info);
+}
+
+fn blit_image(cmd: c.VkCommandBuffer, source: c.VkImage, destination: c.VkImage, srcSize: c.VkExtent2D, dstSize: c.VkExtent2D) void {
+    const empty_offset = c.VkOffset3D {
+        .x = 0,
+        .y = 0,
+        .z = 0,
+    };
+    
+    const src_offset = c.VkOffset3D {
+        .x = @intCast(srcSize.width),
+        .y = @intCast(srcSize.height),
+        .z = 1,
+    };
+
+    const dst_offset = c.VkOffset3D {
+        .x = @intCast(dstSize.width),
+        .y = @intCast(dstSize.height),
+        .z = 1,
+    };
+    
+    const blit_region = c.VkImageBlit2 {
+        .sType = c.VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+        .pNext = null,
+
+        .srcOffsets = [_]c.VkOffset3D{ empty_offset, src_offset },
+        .dstOffsets = [_]c.VkOffset3D{ empty_offset, dst_offset },
+
+        .srcSubresource = c.VkImageSubresourceLayers {
+            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+            .mipLevel = 0,
+        },
+
+        .dstSubresource = c.VkImageSubresourceLayers {
+            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+            .mipLevel = 0,
+        },
+    };
+
+	const blit_image_info = c.VkBlitImageInfo2 {
+        .sType = c.VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+        .pNext = null,
+
+        .dstImage = destination,
+	    .dstImageLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	    .srcImage = source,
+	    .srcImageLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	    .filter = c.VK_FILTER_LINEAR,
+	    .regionCount = 1,
+	    .pRegions = &blit_region,
+    };
+	
+
+	c.vkCmdBlitImage2(cmd, &blit_image_info);
 }
 
 const Error = error {

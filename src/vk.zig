@@ -147,6 +147,11 @@ pub fn deviceWaitIdle(device: c.VkDevice) Error!void {
     try check_result(result);
 }
 
+pub fn vmaCreateImage(allocator: c.VmaAllocator, pImageCreateInfo: [*c]const c.VkImageCreateInfo, pAllocationCreateInfo: [*c]const c.VmaAllocationCreateInfo, pImage: [*c]c.VkImage, pAllocation: [*c]c.VmaAllocation, pAllocationInfo: [*c]c.VmaAllocationInfo) Error!void {
+    const result = c.vmaCreateImage(allocator, pImageCreateInfo, pAllocationCreateInfo, pImage, pAllocation, pAllocationInfo);
+    try check_result(result);
+}
+
 pub fn check_result(result: c.VkResult) Error!void {
     switch (result) {
         c.VK_SUCCESS => return,
