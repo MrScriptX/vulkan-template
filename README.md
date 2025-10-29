@@ -1,0 +1,2 @@
+- [ ] Create buffer image
+- [ ] Create a depth buffer image
