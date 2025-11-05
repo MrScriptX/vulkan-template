@@ -515,9 +515,9 @@ pub const Renderer = struct {
             return Error.SkipImage;
         };
 
-        const image_index = self.acquire_next_image(frame) catch {
+        const image_index = self.acquire_next_image(frame) catch |err| {
             std.log.warn("Failed to acquire next image for frame {x}", .{frame_index});
-            return Error.SkipImage;
+            return err;
         };
 
         // start recording draw command
@@ -573,8 +573,13 @@ pub const Renderer = struct {
 
         var image_index: u32 = 0;
         vk.acquireNextImage2KHR(self.device, &acquire_next_image_info, &image_index) catch |err| {
-            std.log.warn("TODO - handle errors : {any}", .{err});
-            return err;
+            switch (err) {
+                vk.Error.NotReady => return Error.SkipImage,
+                vk.Error.SuboptimalKHR => return Error.RebuildSW,
+                vk.Error.Timeout => return Error.SkipImage,
+                vk.Error.OutOfDateKHR => return Error.RebuildSW,
+                else => return err
+            }
         };
 
         return image_index;
@@ -1170,13 +1175,14 @@ fn blit_image(cmd: c.VkCommandBuffer, source: c.VkImage, destination: c.VkImage,
 	c.vkCmdBlitImage2(cmd, &blit_image_info);
 }
 
-const Error = error {
+pub const Error = error {
     SurfaceError,
     NoDevice,
     DeviceError,
     NotFound,
     InvalidResult,
     SkipImage,
+    RebuildSW,
 };
 
 const std = @import("std");

@@ -50,8 +50,20 @@ const Engine = struct {
 
     pub fn draw(self: *Engine) void {
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
-        self.renderer.draw(frame_index) catch {
-            // TODO handle errors
+        self.renderer.draw(frame_index) catch |err| {
+            switch (err) {
+                engine.Error.SkipImage => {
+                    std.log.warn("Skipping image for frame {}", .{frame_index});
+                },
+                engine.Error.RebuildSW => {
+                    std.log.info("Rebuilding swapchain...", .{});
+                    // TODO : rebuild the swapchain
+                },
+                else => {
+                    std.log.err("Unhandle error. Should be shutting down : {any}", .{err});
+                    // TODO : handle fatal errors
+                }
+            }
         };
         self.frame_count += 1;
     }
