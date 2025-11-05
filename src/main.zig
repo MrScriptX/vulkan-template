@@ -19,7 +19,7 @@ pub fn main() !void {
 
     const allocator = gpa.allocator();
 
-    const renderer = engine.Renderer.init(allocator, "Physics Simulation", window.?) catch {
+    var renderer = engine.Renderer.init(allocator, "Physics Simulation", window.?) catch {
         std.log.err("Renderer initialization failed", .{});
         return;
     };
@@ -38,7 +38,24 @@ pub fn main() !void {
             }
         }
 
-        app.draw();
+        app.draw() catch |err| {
+            switch (err) {
+                engine.Error.SkipImage => {
+                    std.log.warn("Skipping image...", .{});
+                },
+                engine.Error.RebuildSW => {
+                    std.log.info("Rebuilding swapchain...", .{});
+                    renderer.rebuild_swapchain(allocator, window.?) catch {
+                        std.log.err("We are in deep...", .{});
+                        quit = true;
+                    };
+                },
+                else => {
+                    std.log.err("Unhandle error. Should be shutting down : {any}", .{err});
+                    // TODO : handle fatal errors
+                }
+            }
+        };
     }
 
     return;
@@ -48,23 +65,9 @@ const Engine = struct {
     frame_count: u32 = 0,
     renderer: *const engine.Renderer,
 
-    pub fn draw(self: *Engine) void {
+    pub fn draw(self: *Engine) !void {
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
-        self.renderer.draw(frame_index) catch |err| {
-            switch (err) {
-                engine.Error.SkipImage => {
-                    std.log.warn("Skipping image for frame {}", .{frame_index});
-                },
-                engine.Error.RebuildSW => {
-                    std.log.info("Rebuilding swapchain...", .{});
-                    // TODO : rebuild the swapchain
-                },
-                else => {
-                    std.log.err("Unhandle error. Should be shutting down : {any}", .{err});
-                    // TODO : handle fatal errors
-                }
-            }
-        };
+        try self.renderer.draw(frame_index);
         self.frame_count += 1;
     }
 };

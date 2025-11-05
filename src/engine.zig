@@ -156,6 +156,23 @@ const Frame = struct {
         c.vkDestroySemaphore(device, self.sw_semaphore, null);
         c.vkDestroyCommandPool(device, self.command_pool, null);
     }
+
+    pub fn reset_sw_semaphore(self: *Frame, device: c.VkDevice) !void {
+        c.vkDestroySemaphore(device, self.sw_semaphore, null);
+
+        const semaphore_create_info = c.VkSemaphoreCreateInfo {
+            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .flags = 0
+        };
+
+        var sw_semaphore: c.VkSemaphore = undefined;
+        vk.createSemaphore(device, &semaphore_create_info, null, &sw_semaphore) catch |err| {
+            std.log.err("Failed to create swapchain semaphore : {any}", .{ err });
+            return err;
+        };
+
+        self.sw_semaphore = sw_semaphore;
+    }
 };
 
 const Queues = struct {
@@ -517,6 +534,12 @@ pub const Renderer = struct {
 
         const image_index = self.acquire_next_image(frame) catch |err| {
             std.log.warn("Failed to acquire next image for frame {x}", .{frame_index});
+
+            self.frames[frame_index].reset_sw_semaphore(self.device) catch {
+                std.log.err("Failed to reset swapchain semaphore", .{});
+                return Error.RendererError;
+            };
+
             return err;
         };
 
@@ -666,6 +689,19 @@ pub const Renderer = struct {
             std.log.err("Failed to present queue : {any}", .{err});
             return err;
         };
+    }
+
+    pub fn rebuild_swapchain(self: *Renderer, allocator: std.mem.Allocator, window: *c.SDL_Window) !void {
+        vk.deviceWaitIdle(self.device) catch |err| {
+            std.log.warn("Wait for device idle raised an error : {any}", .{err});
+        };
+
+        // clean up swapchain & resources
+        self.swapchain.deinit(self.device);
+
+        // build swapchain
+        const window_extent = current_window_extent(window) catch c.VkExtent2D { .width = 400, .height = 400 }; // try with min res
+        self.swapchain = try Swapchain.init(allocator, self.device, self.gpu, self.surface, window_extent);
     }
 };
 
@@ -1183,6 +1219,7 @@ pub const Error = error {
     InvalidResult,
     SkipImage,
     RebuildSW,
+    RendererError,
 };
 
 const std = @import("std");
