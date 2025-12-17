@@ -5,7 +5,7 @@
     // In a future version of Zig it will be used for package deduplication.
     .version = "0.0.0",
 
-    .fingerprint = 0xfac0641d2f184b3b, // Changing this has security and trust implications.
+    .fingerprint = 0x51ed484427a9f5c5, // Changing this has security and trust implications.
 
     .minimum_zig_version = "0.15.1",
 
