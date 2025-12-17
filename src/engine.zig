@@ -401,6 +401,20 @@ const Swapchain = struct {
     }
 };
 
+pub fn Scene(comptime T: type) type {
+    return struct {
+        scene: T,
+
+        pub fn init() Scene(T) {
+            return .{};
+        }
+
+        pub fn render(self: *const Scene(T)) void {
+            self.scene.draw();
+        }
+    };
+}
+
 pub const Renderer = struct {
     instance: c.VkInstance,
     surface: c.VkSurfaceKHR,
