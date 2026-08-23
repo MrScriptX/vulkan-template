@@ -1,3 +1,4 @@
+// TODO : this file could be generated using build.zig maybe ?
 pub const Error = error {
     Incomplete,
     OutOfHostMemory,

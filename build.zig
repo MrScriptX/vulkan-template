@@ -5,31 +5,25 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // We will also create a module for our other entry point, 'main.zig'.
-    const exe_mod = b.createModule(.{
+    const mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-    });
-
-    const exe = b.addExecutable(.{
-        .name = "univers_simulation",
-        .root_module = exe_mod,
+        .link_libc = true,
+        .link_libcpp = true
     });
 
     // Vulkan SDK
-    const env_map = std.process.getEnvMap(b.allocator) catch {
-        @panic("Out of Memory !");
-    };
-    const vk_sdk_path = env_map.get("VULKAN_SDK") orelse @panic("VULKAN_SDK missing !");
+    const vk_sdk_path = b.graph.environ_map.get("VULKAN_SDK") orelse @panic("VULKAN_SDK missing !");
 
-    exe.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/lib", .{ vk_sdk_path }) });
-    exe.addIncludePath(.{ .cwd_relative = b.fmt("{s}/include", .{ vk_sdk_path }) });
+    mod.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/lib", .{ vk_sdk_path }) });
+    mod.addIncludePath(.{ .cwd_relative = b.fmt("{s}/include", .{ vk_sdk_path }) });
 
     const vk_lib_name = if (target.result.os.tag == .windows) "vulkan-1" else "vulkan";
-    exe.linkSystemLibrary(vk_lib_name);
+    mod.linkSystemLibrary(vk_lib_name, .{});
 
     // VMA
-    exe.addCSourceFile(.{
+    mod.addCSourceFile(.{
         .file = b.path("src/vk_mem_alloc.cpp"),
         .language = .cpp,
         .flags = &.{
@@ -44,13 +38,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true
     });
-    exe.addIncludePath(sdl.path("include"));
-    exe.addLibraryPath(sdl.path("lib/x64"));
+    mod.addIncludePath(sdl.path("include"));
+    mod.addLibraryPath(sdl.path("lib/x64"));
 
-    exe.linkSystemLibrary("SDL3");
+    mod.linkSystemLibrary("SDL3", .{});    
 
-    exe.linkLibC();
-    exe.linkLibCpp();
+    // create exe
+    const exe = b.addExecutable(.{
+        .name = "vulkan-template",
+        .root_module = mod,
+    });
 
     b.installArtifact(exe);
 
@@ -67,7 +64,7 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_unit_tests = b.addTest(.{
-        .root_module = exe_mod,
+        .root_module = mod,
     });
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);

@@ -14,10 +14,12 @@ pub fn main() !void {
     }
     defer c.SDL_DestroyWindow(window);
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
-    defer std.log.debug("Memory check : {any}\n", .{ gpa.deinit() });
-
+    var gpa = std.heap.DebugAllocator(.{}).init;
     const allocator = gpa.allocator();
+    defer {
+        const status = gpa.deinit();
+        std.log.debug("Memory check : {any}\n", .{ status });
+    }
 
     var renderer = engine.Renderer.init(allocator, "Physics Simulation", window.?) catch {
         std.log.err("Renderer initialization failed", .{});
@@ -73,5 +75,5 @@ const Engine = struct {
 };
 
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("c.zig").c; // TODO : update guide https://ziglang.org/download/0.16.0/release-notes.html#cImport-Moving-to-Build-System
 const engine = @import("engine.zig");
