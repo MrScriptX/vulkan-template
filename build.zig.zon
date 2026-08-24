@@ -14,6 +14,7 @@
             .url = "https://github.com/libsdl-org/SDL/releases/download/release-3.2.24/SDL3-devel-3.2.24-VC.zip",
             .hash = "N-V-__8AAKqsVANZGwyg0GMr_QftjPQ8wUSACRv5cvR548D0",
         },
+        .zephyr = .{ .path = "modules/zephyr" },
     },
 
     .paths = .{

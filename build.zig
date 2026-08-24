@@ -41,33 +41,15 @@ pub fn build(b: *std.Build) void {
         }
     });
 
-    // vk.zig generator: parses the Vulkan SDK's vk.xml at build time and emits flat
-    // Error!void wrapper functions for every VkResult-returning Vulkan command.
-    const vk_gen_mod = b.createModule(.{
-        .root_source_file = b.path("tools/vk_generator/main.zig"),
-        .target = b.graph.host,
-        .optimize = .Debug
-    });
-    const vk_gen_exe = b.addExecutable(.{
-        .name = "vk_generator",
-        .root_module = vk_gen_mod
-    });
-
-    const vk_gen_run = b.addRunArtifact(vk_gen_exe);
-    vk_gen_run.addFileArg(.{ .cwd_relative = b.fmt("{s}/share/vulkan/registry/vk.xml", .{ vk_sdk_path }) });
-    const vk_zig_source = vk_gen_run.addOutputFileArg("vk.zig");
-
-    const vk_module = b.createModule(.{
-        .root_source_file = vk_zig_source,
+    // vk.zig bindings: generated at build time by the zephyr module from the
+    // Vulkan SDK's vk.xml (handles/enums/bitmasks/structs plus direct extern
+    // fn declarations, statically resolved by the linker against vulkan-1/vulkan).
+    const zephyr_dep = b.dependency("zephyr", .{
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "c",
-                .module = c_module
-            }
-        }
+        .registry = @as(std.Build.LazyPath, .{ .cwd_relative = b.fmt("{s}/share/vulkan/registry/vk.xml", .{ vk_sdk_path }) }),
     });
+    const vk_module = zephyr_dep.module("vk");
 
     // We will also create a module for our other entry point, 'main.zig'.
     const mod = b.createModule(.{
@@ -114,13 +96,12 @@ pub fn build(b: *std.Build) void {
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
-    const vk_gen_unit_tests = b.addTest(.{
-        .root_module = vk_gen_mod,
+    const zephyr_tests = b.addTest(.{
+        .root_module = zephyr_dep.module("zephyr"),
     });
-
-    const run_vk_gen_unit_tests = b.addRunArtifact(vk_gen_unit_tests);
+    const run_zephyr_tests = b.addRunArtifact(zephyr_tests);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
-    test_step.dependOn(&run_vk_gen_unit_tests.step);
+    test_step.dependOn(&run_zephyr_tests.step);
 }

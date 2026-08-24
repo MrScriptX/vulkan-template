@@ -9,20 +9,20 @@ const Layers = struct {
 
 const Image = struct {
     allocation: c.VmaAllocation,
-    image: c.VkImage,
-    image_view: c.VkImageView,
-    extent: c.VkExtent3D,
+    image: vk.Image,
+    image_view: vk.ImageView,
+    extent: vk.Extent3D,
 
-    pub fn init(allocator: c.VmaAllocator, device: c.VkDevice, format: c.VkFormat, extent: c.VkExtent3D, usage: c.VkImageUsageFlags, aspect_mask: c.VkImageAspectFlags) !Image {
-        const image_create_info = c.VkImageCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .imageType = c.VK_IMAGE_TYPE_2D,
+    pub fn init(allocator: c.VmaAllocator, device: vk.Device, format: vk.Format, extent: vk.Extent3D, usage: vk.ImageUsageFlags, aspect_mask: vk.ImageAspectFlags) !Image {
+        const image_create_info = vk.ImageCreateInfo {
+            .sType = .image_create_info,
+            .imageType = .@"2d",
             .format = format,
             .extent = extent,
             .mipLevels = 1,
             .arrayLayers = 1,
-            .samples = c.VK_SAMPLE_COUNT_1_BIT, //for MSAA. we will not be using it by default, so default it to 1 sample per pixel.
-            .tiling = c.VK_IMAGE_TILING_OPTIMAL, // optimal tiling, which means the image is stored on the best gpu format
+            .samples = .{ .@"1_bit" = true }, //for MSAA. we will not be using it by default, so default it to 1 sample per pixel.
+            .tiling = .optimal, // optimal tiling, which means the image is stored on the best gpu format
             .usage = usage,
         };
 
@@ -32,19 +32,21 @@ const Image = struct {
         };
 
         var allocation: c.VmaAllocation = undefined;
-        var image: c.VkImage = undefined;
-        vk.vmaCreateImage(allocator, &image_create_info, &alloc_create_info, &image, &allocation, null) catch |err| {
+        var c_image: c.VkImage = undefined;
+        vk_interop.vmaCreateImage(allocator, @ptrCast(&image_create_info), &alloc_create_info, &c_image, &allocation, null) catch |err| {
             std.log.err("Failed to create image : {any}", .{err});
             return err;
         };
-        errdefer c.vmaDestroyImage(allocator, image, allocation);
+        errdefer c.vmaDestroyImage(allocator, c_image, allocation);
 
-        const image_view_create_info = c.VkImageViewCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+        const image = vk_interop.imageFromC(c_image);
+
+        const image_view_create_info = vk.ImageViewCreateInfo {
+            .sType = .image_view_create_info,
+            .viewType = .@"2d",
             .image = image,
             .format = format,
-            .subresourceRange = c.VkImageSubresourceRange {
+            .subresourceRange = vk.ImageSubresourceRange {
                 .baseMipLevel = 0,
                 .levelCount = 1,
                 .baseArrayLayer = 0,
@@ -53,12 +55,12 @@ const Image = struct {
             }
         };
 
-        var image_view: c.VkImageView = undefined;
+        var image_view: vk.ImageView = undefined;
         vk.createImageView(device, &image_view_create_info, null, &image_view) catch |err| {
             std.log.err("Failed to create image view : {any}", .{err});
             return err;
         };
-        errdefer c.vkDestroyImageView(device, image_view, null);
+        errdefer vk.destroyImageView(device, image_view, null);
 
         return .{
             .allocation = allocation,
@@ -68,74 +70,73 @@ const Image = struct {
         };
     }
 
-    pub fn deinit(self: *const Image, device: c.VkDevice, allocator: c.VmaAllocator) void {
-        c.vkDestroyImageView(device, self.image_view, null);
-        c.vmaDestroyImage(allocator, self.image, self.allocation);
+    pub fn deinit(self: *const Image, device: vk.Device, allocator: c.VmaAllocator) void {
+        vk.destroyImageView(device, self.image_view, null);
+        c.vmaDestroyImage(allocator, vk_interop.imageToC(self.image), self.allocation);
     }
 };
 
 const Frame = struct {
-    command_pool: c.VkCommandPool,
-    command_buffer: c.VkCommandBuffer,
+    command_pool: vk.CommandPool,
+    command_buffer: vk.CommandBuffer,
 
-    sw_semaphore: c.VkSemaphore,
-    render_semaphore: c.VkSemaphore,
-	render_fence: c.VkFence,
+    sw_semaphore: vk.Semaphore,
+    render_semaphore: vk.Semaphore,
+	render_fence: vk.Fence,
 
-    pub fn init(device: c.VkDevice, queue_family_index: u32) !Frame {
+    pub fn init(device: vk.Device, queue_family_index: u32) !Frame {
         // create the command pool
-        const command_pool_create_info = c.VkCommandPoolCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .flags = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        const command_pool_create_info = vk.CommandPoolCreateInfo {
+            .sType = .command_pool_create_info,
+            .flags = .{ .reset_command_buffer_bit = true },
             .queueFamilyIndex = queue_family_index,
         };
 
-        var command_pool: c.VkCommandPool = undefined;
+        var command_pool: vk.CommandPool = undefined;
         vk.createCommandPool(device, &command_pool_create_info, null, &command_pool) catch |err| {
             std.log.err("Failed to create a command pool : {any}", .{err});
             return err;
         };
-        errdefer c.vkDestroyCommandPool(device, command_pool, null);
+        errdefer vk.destroyCommandPool(device, command_pool, null);
 
         // create the command buffer
-        const command_buffer_info = c.VkCommandBufferAllocateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        const command_buffer_info = vk.CommandBufferAllocateInfo {
+            .sType = .command_buffer_allocate_info,
             .commandPool = command_pool,
-            .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .level = .primary,
             .commandBufferCount = 1
         };
 
-        var command_buffer: c.VkCommandBuffer = undefined;
+        var command_buffer: vk.CommandBuffer = undefined;
         vk.allocateCommandBuffers(device, &command_buffer_info, &command_buffer) catch |err| {
             std.log.err("Failed to allocate frame command buffer : {any}", .{ err });
             return err;
         };
 
-        const semaphore_create_info = c.VkSemaphoreCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .flags = 0
+        const semaphore_create_info = vk.SemaphoreCreateInfo {
+            .sType = .semaphore_create_info,
         };
 
-        var sw_semaphore: c.VkSemaphore = undefined;
+        var sw_semaphore: vk.Semaphore = undefined;
         vk.createSemaphore(device, &semaphore_create_info, null, &sw_semaphore) catch |err| {
             std.log.err("Failed to allocate swapchain semaphore : {any}", .{ err });
             return err;
         };
-        errdefer c.vkDestroySemaphore(device, sw_semaphore, null);
+        errdefer vk.destroySemaphore(device, sw_semaphore, null);
 
-        var render_semaphore: c.VkSemaphore = undefined;
+        var render_semaphore: vk.Semaphore = undefined;
         vk.createSemaphore(device, &semaphore_create_info, null, &render_semaphore) catch |err| {
             std.log.err("Failed to create render semaphore : {any}", .{ err });
             return err;
         };
-        errdefer c.vkDestroySemaphore(device, render_semaphore, null);
+        errdefer vk.destroySemaphore(device, render_semaphore, null);
 
-        const fence_create_info = c.VkFenceCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
+        const fence_create_info = vk.FenceCreateInfo {
+            .sType = .fence_create_info,
+            .flags = .{ .signaled_bit = true },
         };
 
-        var render_fence: c.VkFence = undefined;
+        var render_fence: vk.Fence = undefined;
         vk.createFence(device, &fence_create_info, null, &render_fence) catch |err| {
             std.log.err("Failed to create render fence : {any}", .{err});
             return err;
@@ -150,22 +151,21 @@ const Frame = struct {
         };
     }
 
-    pub fn deinit(self: *const Frame, device: c.VkDevice) void {
-        c.vkDestroyFence(device, self.render_fence, null);
-        c.vkDestroySemaphore(device, self.render_semaphore, null);
-        c.vkDestroySemaphore(device, self.sw_semaphore, null);
-        c.vkDestroyCommandPool(device, self.command_pool, null);
+    pub fn deinit(self: *const Frame, device: vk.Device) void {
+        vk.destroyFence(device, self.render_fence, null);
+        vk.destroySemaphore(device, self.render_semaphore, null);
+        vk.destroySemaphore(device, self.sw_semaphore, null);
+        vk.destroyCommandPool(device, self.command_pool, null);
     }
 
-    pub fn reset_sw_semaphore(self: *Frame, device: c.VkDevice) !void {
-        c.vkDestroySemaphore(device, self.sw_semaphore, null);
+    pub fn reset_sw_semaphore(self: *Frame, device: vk.Device) !void {
+        vk.destroySemaphore(device, self.sw_semaphore, null);
 
-        const semaphore_create_info = c.VkSemaphoreCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .flags = 0
+        const semaphore_create_info = vk.SemaphoreCreateInfo {
+            .sType = .semaphore_create_info,
         };
 
-        var sw_semaphore: c.VkSemaphore = undefined;
+        var sw_semaphore: vk.Semaphore = undefined;
         vk.createSemaphore(device, &semaphore_create_info, null, &sw_semaphore) catch |err| {
             std.log.err("Failed to create swapchain semaphore : {any}", .{ err });
             return err;
@@ -176,18 +176,18 @@ const Frame = struct {
 };
 
 const Queues = struct {
-    graphic: c.VkQueue,
+    graphic: vk.Queue,
     graphic_index: u32,
 
-    compute: ?c.VkQueue = null,
+    compute: ?vk.Queue = null,
     compute_index: ?u32 = null,
 
-    pub fn init(device: c.VkDevice, graphic_index: u32, compute_index: ?u32) Queues {
-        const graphic_queue: c.VkQueue = create_queue(device, graphic_index);
+    pub fn init(device: vk.Device, graphic_index: u32, compute_index: ?u32) Queues {
+        const graphic_queue: vk.Queue = create_queue(device, graphic_index);
 
-        var compute_queue: ?c.VkQueue = null;
+        var compute_queue: ?vk.Queue = null;
         if (compute_index) |index| {
-            const queue: c.VkQueue = create_queue(device, index);
+            const queue: vk.Queue = create_queue(device, index);
             compute_queue = queue;
         }
 
@@ -204,14 +204,14 @@ const Queues = struct {
 const Swapchain = struct {
     allocator: std.mem.Allocator,
 
-    extent: c.VkExtent2D,
-    format: c.VkSurfaceFormatKHR,
-    swapchain: c.VkSwapchainKHR,
-    images: []c.VkImage,
-    image_views: []c.VkImageView,
+    extent: vk.Extent2D,
+    format: vk.SurfaceFormatKHR,
+    swapchain: vk.SwapchainKHR,
+    images: []vk.Image,
+    image_views: []vk.ImageView,
 
-    pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, gpu: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, window_extent: c.VkExtent2D) !Swapchain {
-        var surface_support: c.VkSurfaceCapabilitiesKHR = undefined;
+    pub fn init(allocator: std.mem.Allocator, device: vk.Device, gpu: vk.PhysicalDevice, surface: vk.SurfaceKHR, window_extent: vk.Extent2D) !Swapchain {
+        var surface_support: vk.SurfaceCapabilitiesKHR = undefined;
         vk.getPhysicalDeviceSurfaceCapabilitiesKHR(gpu, surface, &surface_support) catch |err| {
             std.log.err("Failed to get surface capabilities : {any}", .{err});
             return err;
@@ -230,8 +230,8 @@ const Swapchain = struct {
         }
 
         // fetch available formats
-        const surface_format_info = c.VkPhysicalDeviceSurfaceInfo2KHR {
-            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR,
+        const surface_format_info = vk.PhysicalDeviceSurfaceInfo2KHR {
+            .sType = .physical_device_surface_info_2_khr,
             .surface = surface
         };
 
@@ -246,16 +246,16 @@ const Swapchain = struct {
             return Error.NotFound;
         }
 
-        const formats = allocator.alloc(c.VkSurfaceFormat2KHR, formats_count) catch |err| {
+        const formats = allocator.alloc(vk.SurfaceFormat2KHR, formats_count) catch |err| {
             std.log.err("Out of Memory", .{});
             return err;
         };
         defer allocator.free(formats);
 
         for (formats) |*f| {
-            f.sType = c.VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR;
+            f.sType = .surface_format_2_khr;
             f.pNext = null;
-            f.surfaceFormat = c.VkSurfaceFormatKHR {};
+            f.surfaceFormat = vk.SurfaceFormatKHR {};
         }
 
         vk.getPhysicalDeviceSurfaceFormats2KHR(gpu, &surface_format_info, &formats_count, formats.ptr) catch |err| {
@@ -264,16 +264,16 @@ const Swapchain = struct {
         };
 
         // pick optimal format
-        var format: c.VkSurfaceFormatKHR = undefined;
-        if (formats.len == 1 and formats[0].surfaceFormat.format == c.VK_FORMAT_UNDEFINED) {
-            format = c.VkSurfaceFormatKHR {
-                .format = c.VK_FORMAT_B8G8R8A8_UNORM,
-                .colorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+        var format: vk.SurfaceFormatKHR = undefined;
+        if (formats.len == 1 and formats[0].surfaceFormat.format == .@"undefined") {
+            format = vk.SurfaceFormatKHR {
+                .format = .b8g8r8a8_unorm,
+                .colorSpace = .srgb_nonlinear,
             };
         }
         else {
             for (formats) |f| {
-                if (f.surfaceFormat.format == c.VK_FORMAT_B8G8R8A8_UNORM and f.surfaceFormat.colorSpace == c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                if (f.surfaceFormat.format == .b8g8r8a8_unorm and f.surfaceFormat.colorSpace == .srgb_nonlinear) {
                     format = f.surfaceFormat;
                 }
             }
@@ -291,25 +291,25 @@ const Swapchain = struct {
             return Error.NotFound;
         }
 
-        const present_modes = allocator.alloc(c.VkPresentModeKHR, present_mode_counts) catch |err| {
+        const present_modes = allocator.alloc(vk.PresentModeKHR, present_mode_counts) catch |err| {
             std.log.err("Out of Memory", .{});
             return err;
         };
         defer allocator.free(present_modes);
-        
+
         vk.getPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &present_mode_counts, present_modes.ptr) catch |err| {
             std.log.err("Failed to enumerates device supported formats: {any}", .{err});
             return err;
         };
 
         // pick a present mode
-        var sw_mode: c.VkPresentModeKHR = c.VK_PRESENT_MODE_FIFO_KHR; // par defaut
+        var sw_mode: vk.PresentModeKHR = .fifo; // par defaut
         for (present_modes) |mode| {
-            if (mode == c.VK_PRESENT_MODE_MAILBOX_KHR) { // meilleur mode
+            if (mode == .mailbox) { // meilleur mode
                 sw_mode = mode;
                 break;
             }
-            else if (mode == c.VK_PRESENT_MODE_IMMEDIATE_KHR) { // segond meilleur si disponible
+            else if (mode == .immediate) { // segond meilleur si disponible
                 sw_mode = mode;
             }
         }
@@ -321,34 +321,34 @@ const Swapchain = struct {
         }
 
         // list queues info
-        const swapchain_create_info = c.VkSwapchainCreateInfoKHR {
-            .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        const swapchain_create_info = vk.SwapchainCreateInfoKHR {
+            .sType = .swapchain_create_info_khr,
             .surface = surface,
             .minImageCount = image_count,
             .imageFormat = format.format,
             .imageColorSpace = format.colorSpace,
             .imageExtent = sw_extent,
             .imageArrayLayers = 1, // for mulitview/stereo
-            .imageUsage = c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-            .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE, // if MODE_CONCURENT, define index count, and familiy index
+            .imageUsage = .{ .transfer_dst_bit = true, .color_attachment_bit = true },
+            .imageSharingMode = .exclusive, // if MODE_CONCURENT, define index count, and familiy index
             // .queueFamilyIndexCount = 1,
             // .pQueueFamilyIndices = &.{ queues.graphic_index },
             .preTransform = surface_support.currentTransform,
-            .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            .compositeAlpha = .{ .opaque_bit = true },
             .presentMode = sw_mode,
             .clipped = c.VK_TRUE,
-            .oldSwapchain = @ptrCast(c.VK_NULL_HANDLE),
+            .oldSwapchain = .null_handle,
         };
 
-        var swapchain: c.VkSwapchainKHR = undefined;
+        var swapchain: vk.SwapchainKHR = undefined;
         vk.createSwapchainKHR(device, &swapchain_create_info, null, &swapchain) catch |err| {
             std.log.err("Failed to create the swapchain : {any}", .{err});
             return err;
         };
-        errdefer c.vkDestroySwapchainKHR(device, swapchain, null);
+        errdefer vk.destroySwapchainKHR(device, swapchain, null);
 
         // get the swapchain images
-        const images = try allocator.alloc(c.VkImage, image_count);
+        const images = try allocator.alloc(vk.Image, image_count);
         errdefer allocator.free(images);
 
         vk.getSwapchainImagesKHR(device, swapchain, &image_count, images.ptr) catch |err| {
@@ -357,17 +357,17 @@ const Swapchain = struct {
         };
 
         // create image views
-        const image_views = try allocator.alloc(c.VkImageView, image_count);
+        const image_views = try allocator.alloc(vk.ImageView, image_count);
         errdefer allocator.free(image_views);
 
         for (images, 0..) |image, i| {
-            const image_view_create_info = c.VkImageViewCreateInfo {
-                .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            const image_view_create_info = vk.ImageViewCreateInfo {
+                .sType = .image_view_create_info,
                 .image = image,
-                .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+                .viewType = .@"2d",
                 .format = format.format,
-                .subresourceRange = c.VkImageSubresourceRange {
-                    .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                .subresourceRange = vk.ImageSubresourceRange {
+                    .aspectMask = .{ .color_bit = true },
                     .baseMipLevel = 0,
                     .levelCount = 1,
                     .baseArrayLayer = 0,
@@ -391,13 +391,13 @@ const Swapchain = struct {
         };
     }
 
-    pub fn deinit(self: *const Swapchain, device: c.VkDevice) void {
+    pub fn deinit(self: *const Swapchain, device: vk.Device) void {
         for (self.image_views) |image_view| {
-            c.vkDestroyImageView(device, image_view, null);
+            vk.destroyImageView(device, image_view, null);
         }
         self.allocator.free(self.image_views);
         self.allocator.free(self.images); // on ne destroy pas les images car elles seront détruite par vkDestroySwapchainKHR
-        c.vkDestroySwapchainKHR(device, self.swapchain, null);
+        vk.destroySwapchainKHR(device, self.swapchain, null);
     }
 };
 
@@ -416,10 +416,10 @@ pub fn Scene(comptime T: type) type {
 }
 
 pub const Renderer = struct {
-    instance: c.VkInstance,
-    surface: c.VkSurfaceKHR,
-    gpu: c.VkPhysicalDevice,
-    device: c.VkDevice,
+    instance: vk.Instance,
+    surface: vk.SurfaceKHR,
+    gpu: vk.PhysicalDevice,
+    device: vk.Device,
     queues: Queues,
     vma: c.VmaAllocator,
     swapchain: Swapchain,
@@ -432,11 +432,11 @@ pub const Renderer = struct {
     render_image: Image, // image use to record scene command
     depth_image: Image,
 
-    pub fn init(allocator: std.mem.Allocator, app_name: []const u8, window: *c.SDL_Window) !Renderer {
+    pub fn init(allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
             .VK_LAYER_KHRONOS_validation = true // when debug
         };
-        
+
         const extensions = Extensions {
             .VK_KHR_swapchain = true,
             .VK_KHR_synchronization2 = true,
@@ -444,10 +444,10 @@ pub const Renderer = struct {
 
         // initialize vulkan
         const instance = try create_instance(allocator, app_name, layers);
-        errdefer c.vkDestroyInstance(instance, null);
+        errdefer vk.destroyInstance(instance, null);
 
         const surface = try create_surface(window, instance);
-        errdefer c.vkDestroySurfaceKHR(instance, surface, null);
+        errdefer vk.destroySurfaceKHR(instance, surface, null);
 
         const gpu = try select_physical_device(allocator, instance, surface, extensions);
         print_physical_device_info(gpu);
@@ -458,7 +458,7 @@ pub const Renderer = struct {
         };
 
         const device = try create_device(allocator, gpu, queue_indexes.@"0", queue_indexes.@"1", layers, extensions);
-        errdefer c.vkDestroyDevice(device, null);
+        errdefer vk.destroyDevice(device, null);
 
         const queues = Queues.init(device, queue_indexes.@"0", queue_indexes.@"1");
 
@@ -466,7 +466,7 @@ pub const Renderer = struct {
         errdefer c.vmaDestroyAllocator(vma);
 
         // initialize the swapchain
-        const window_extent = current_window_extent(window) catch c.VkExtent2D { .width = 400, .height = 400 }; // try with min res
+        const window_extent = current_window_extent(window) catch vk.Extent2D { .width = 400, .height = 400 }; // try with min res
         const swapchain = try Swapchain.init(allocator, device, gpu, surface, window_extent);
         errdefer swapchain.deinit(device);
 
@@ -482,21 +482,21 @@ pub const Renderer = struct {
         errdefer for (0..frame_count) |i| frames[i].deinit(device);
 
         // create the render images
-        const render_extent = c.VkExtent3D {
+        const render_extent = vk.Extent3D {
             .width = swapchain.extent.width,
             .height = swapchain.extent.height,
             .depth = 1
         };
 
-        const render_image_usage = c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_STORAGE_BIT | c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        
-        const render_image = Image.init(vma, device, c.VK_FORMAT_R16G16B16A16_SFLOAT, render_extent, render_image_usage, c.VK_IMAGE_ASPECT_COLOR_BIT) catch |err| {
+        const render_image_usage: vk.ImageUsageFlags = .{ .transfer_src_bit = true, .storage_bit = true, .color_attachment_bit = true };
+
+        const render_image = Image.init(vma, device, .r16g16b16a16_sfloat, render_extent, render_image_usage, .{ .color_bit = true }) catch |err| {
             std.log.err("Failed to create render image", .{});
             return err;
         };
         errdefer render_image.deinit(device, vma);
 
-        const depth_image = try Image.init(vma, device, c.VK_FORMAT_D32_SFLOAT, render_extent, c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, c.VK_IMAGE_ASPECT_DEPTH_BIT);
+        const depth_image = try Image.init(vma, device, .d32_sfloat, render_extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
         errdefer depth_image.deinit(device, vma);
 
         return .{
@@ -533,9 +533,9 @@ pub const Renderer = struct {
         self.swapchain.deinit(self.device);
 
         c.vmaDestroyAllocator(self.vma);
-        c.vkDestroyDevice(self.device, null);
-        c.vkDestroySurfaceKHR(self.instance, self.surface, null);
-        c.vkDestroyInstance(self.instance, null);
+        vk.destroyDevice(self.device, null);
+        vk.destroySurfaceKHR(self.instance, self.surface, null);
+        vk.destroyInstance(self.instance, null);
     }
 
     pub fn draw(self: *const Renderer, frame_index: u32) !void {
@@ -563,32 +563,32 @@ pub const Renderer = struct {
             return Error.SkipImage;
         };
 
-        transition_image_layout(cmd, self.render_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_GENERAL);
+        transition_image_layout(cmd, self.render_image.image, .@"undefined", .general);
 
         // draw background
 
-        transition_image_layout(cmd, self.render_image.image, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        transition_image_layout(cmd, self.depth_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+        transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
+        transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);
 
         // draw scene
 
-        transition_image_layout(cmd, self.render_image.image, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_image_layout(cmd, self.render_image.image, .color_attachment_optimal, .transfer_src_optimal);
 
 
         // copy draw image to swapchain image
-        transition_image_layout(cmd, self.swapchain.images[image_index], c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        transition_image_layout(cmd, self.swapchain.images[image_index], .@"undefined", .transfer_dst_optimal);
 
-        const render_image_extent = c.VkExtent2D {
+        const render_image_extent = vk.Extent2D {
             .width = self.render_image.extent.width,
             .height = self.render_image.extent.height,
         };
         blit_image(cmd, self.render_image.image, self.swapchain.images[image_index], render_image_extent, self.swapchain.extent);
 
-        transition_image_layout(cmd, self.swapchain.images[image_index], c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        transition_image_layout(cmd, self.swapchain.images[image_index], .transfer_dst_optimal, .color_attachment_optimal);
 
         // draw engine GUI
 
-        transition_image_layout(cmd, self.swapchain.images[image_index], c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        transition_image_layout(cmd, self.swapchain.images[image_index], .color_attachment_optimal, .present_src_khr);
 
         // end recording
         // submit command buffer
@@ -599,12 +599,12 @@ pub const Renderer = struct {
     }
 
     fn acquire_next_image(self: *const Renderer, frame: *const Frame) !u32 {
-        const acquire_next_image_info = c.VkAcquireNextImageInfoKHR {
-            .sType = c.VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR,
+        const acquire_next_image_info = vk.AcquireNextImageInfoKHR {
+            .sType = .acquire_next_image_info_khr,
             .swapchain = self.swapchain.swapchain,
             .timeout = std.math.maxInt(u64),
             .semaphore = frame.sw_semaphore,
-            .fence = null,
+            .fence = .null_handle,
             .deviceMask = 1,
         };
 
@@ -622,20 +622,20 @@ pub const Renderer = struct {
         return image_index;
     }
 
-    fn begin_draw_command(self: *const Renderer, frame: *const Frame) !c.VkCommandBuffer {
+    fn begin_draw_command(self: *const Renderer, frame: *const Frame) !vk.CommandBuffer {
         vk.resetFences(self.device, 1, &frame.render_fence) catch |err| {
             std.log.warn("Failed to reset frame fence : {any}", .{err});
             return err;
         };
 
-        vk.resetCommandBuffer(frame.command_buffer, 0) catch |err| {
+        vk.resetCommandBuffer(frame.command_buffer, .{}) catch |err| {
             std.log.warn("Failed to reset command buffer : {any}", .{err});
             return err;
         };
 
-        const begin_info = c.VkCommandBufferBeginInfo {
-            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        const begin_info = vk.CommandBufferBeginInfo {
+            .sType = .command_buffer_begin_info,
+            .flags = .{ .one_time_submit_bit = true },
         };
         vk.beginCommandBuffer(frame.command_buffer, &begin_info) catch |err| {
             std.log.warn("Failed to begin command buffer : {any}", .{err});
@@ -645,37 +645,36 @@ pub const Renderer = struct {
         return frame.command_buffer;
     }
 
-    fn submit_draw_command(self: *const Renderer, cmd: c.VkCommandBuffer, frame: *const Frame, image_index: u32) !void {
+    fn submit_draw_command(self: *const Renderer, cmd: vk.CommandBuffer, frame: *const Frame, image_index: u32) !void {
         vk.endCommandBuffer(cmd) catch |err| {
             std.log.err("Failed to end command buffer : {any}", .{err});
             return err;
         };
 
-        const command_buffer_submit_info = c.VkCommandBufferSubmitInfo {
-            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        const command_buffer_submit_info = vk.CommandBufferSubmitInfo {
+            .sType = .command_buffer_submit_info,
             .commandBuffer = cmd,
             .deviceMask = 0
         };
 
-        const wait_semaphore_info = c.VkSemaphoreSubmitInfo {
-            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        const wait_semaphore_info = vk.SemaphoreSubmitInfo {
+            .sType = .semaphore_submit_info,
             .semaphore = frame.sw_semaphore,
-            .stageMask = c.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
+            .stageMask = .{ .color_attachment_output_bit = true },
             .deviceIndex = 0,
             .value = 1,
         };
 
-        const signal_semaphore_info = c.VkSemaphoreSubmitInfo {
-            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        const signal_semaphore_info = vk.SemaphoreSubmitInfo {
+            .sType = .semaphore_submit_info,
             .semaphore = frame.render_semaphore,
-            .stageMask = c.VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
+            .stageMask = .{ .all_graphics_bit = true },
             .deviceIndex = 0,
             .value = 1,
         };
 
-        const submit_info = c.VkSubmitInfo2 {
-            .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-            .flags = 0,
+        const submit_info = vk.SubmitInfo2 {
+            .sType = .submit_info_2,
             .commandBufferInfoCount = 1,
             .pCommandBufferInfos = &command_buffer_submit_info,
             .waitSemaphoreInfoCount = 1,
@@ -689,14 +688,13 @@ pub const Renderer = struct {
             return err;
         };
 
-        const present_info = c.VkPresentInfoKHR {
-            .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        const present_info = vk.PresentInfoKHR {
+            .sType = .present_info_khr,
             .waitSemaphoreCount = 1,
             .pWaitSemaphores = &frame.render_semaphore,
             .swapchainCount = 1,
             .pSwapchains = &self.swapchain.swapchain,
             .pImageIndices = &image_index,
-            .pResults = null,
         };
 
         vk.queuePresentKHR(self.queues.graphic, &present_info) catch |err| {
@@ -714,14 +712,14 @@ pub const Renderer = struct {
         self.swapchain.deinit(self.device);
 
         // build swapchain
-        const window_extent = current_window_extent(window) catch c.VkExtent2D { .width = 400, .height = 400 }; // try with min res
+        const window_extent = current_window_extent(window) catch vk.Extent2D { .width = 400, .height = 400 }; // try with min res
         self.swapchain = try Swapchain.init(allocator, self.device, self.gpu, self.surface, window_extent);
     }
 };
 
-fn create_instance(allocator: std.mem.Allocator, app_name: []const u8, layers: Layers) !c.VkInstance {
-    const app_info: c.VkApplicationInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO,
+fn create_instance(allocator: std.mem.Allocator, app_name: [:0]const u8, layers: Layers) !vk.Instance {
+    const app_info: vk.ApplicationInfo = .{
+        .sType = .application_info,
         .apiVersion = c.VK_MAKE_API_VERSION(0, 1, 4, 0),
         .pApplicationName = app_name.ptr,
         .applicationVersion = c.VK_MAKE_VERSION(0, 0, 1),
@@ -748,18 +746,18 @@ fn create_instance(allocator: std.mem.Allocator, app_name: []const u8, layers: L
         try layer_names.append(allocator, "VK_LAYER_KHRONOS_validation");
     }
 
-    const instance_info = c.VkInstanceCreateInfo {
-        .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+    const instance_info = vk.InstanceCreateInfo {
+        .sType = .instance_create_info,
         .pApplicationInfo = &app_info,
-        
+
         .enabledLayerCount = @intCast(layer_names.items.len),
         .ppEnabledLayerNames = @ptrCast(layer_names.items.ptr),
-        
+
         .enabledExtensionCount = @intCast(extensions.items.len),
         .ppEnabledExtensionNames = extensions.items.ptr,
     };
 
-    var instance: c.VkInstance = undefined;
+    var instance: vk.Instance = undefined;
     vk.createInstance(&instance_info, null, &instance) catch |err| {
         std.log.err("Vulkan instance creation failed : {any}", .{err});
         return err;
@@ -768,18 +766,18 @@ fn create_instance(allocator: std.mem.Allocator, app_name: []const u8, layers: L
     return instance;
 }
 
-fn create_surface(window: *c.SDL_Window, instance: c.VkInstance) !c.VkSurfaceKHR {
+fn create_surface(window: *c.SDL_Window, instance: vk.Instance) !vk.SurfaceKHR {
     var surface: c.VkSurfaceKHR = undefined;
-    const result = c.SDL_Vulkan_CreateSurface(window, @ptrCast(instance), null, &surface);
+    const result = c.SDL_Vulkan_CreateSurface(window, vk_interop.instanceToC(instance), null, &surface);
     if (result == false) {
         std.log.err("Unable to create Vulkan surface: {s}", .{ c.SDL_GetError() });
         return Error.SurfaceError;
     }
 
-    return surface;
+    return vk_interop.surfaceFromC(surface);
 }
 
-fn select_physical_device(allocator: std.mem.Allocator, instance: c.VkInstance, surface: c.VkSurfaceKHR, extensions: Extensions) !c.VkPhysicalDevice {
+fn select_physical_device(allocator: std.mem.Allocator, instance: vk.Instance, surface: vk.SurfaceKHR, extensions: Extensions) !vk.PhysicalDevice {
     var device_count: u32 = 0;
     vk.enumeratePhysicalDevices(instance, &device_count, null) catch |err| {
         std.log.err("Failed to enumerate devices : {any}", .{err});
@@ -791,7 +789,7 @@ fn select_physical_device(allocator: std.mem.Allocator, instance: c.VkInstance, 
         return Error.NoDevice;
     }
 
-    const devices = try allocator.alloc(c.VkPhysicalDevice, device_count);
+    const devices = try allocator.alloc(vk.PhysicalDevice, device_count);
     defer allocator.free(devices);
 
     vk.enumeratePhysicalDevices(instance, &device_count, devices.ptr) catch |err| {
@@ -813,13 +811,13 @@ fn select_physical_device(allocator: std.mem.Allocator, instance: c.VkInstance, 
     return Error.NoDevice;
 }
 
-fn check_device_properties(device: c.VkPhysicalDevice) bool {
-    var properties: c.VkPhysicalDeviceProperties2 = .{
-        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+fn check_device_properties(device: vk.PhysicalDevice) bool {
+    var properties: vk.PhysicalDeviceProperties2 = .{
+        .sType = .physical_device_properties_2,
     };
-    c.vkGetPhysicalDeviceProperties2(device, &properties);
+    vk.getPhysicalDeviceProperties2(device, &properties);
 
-    if (properties.properties.deviceType != c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU and properties.properties.deviceType != c.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+    if (properties.properties.deviceType != .discrete_gpu and properties.properties.deviceType != .integrated_gpu) {
         std.log.warn("{s} is not a dedicated device", .{properties.properties.deviceName});
         return false;
     }
@@ -827,16 +825,16 @@ fn check_device_properties(device: c.VkPhysicalDevice) bool {
     return true;
 }
 
-fn check_device_features(device: c.VkPhysicalDevice) bool {
-    var features: c.VkPhysicalDeviceFeatures2 = .{
-        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+fn check_device_features(device: vk.PhysicalDevice) bool {
+    var features: vk.PhysicalDeviceFeatures2 = .{
+        .sType = .physical_device_features_2,
     };
-    c.vkGetPhysicalDeviceFeatures2(device, &features);
+    vk.getPhysicalDeviceFeatures2(device, &features);
 
     return true;
 }
 
-fn check_device_extensions(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, exts: Extensions) bool {
+fn check_device_extensions(allocator: std.mem.Allocator, device: vk.PhysicalDevice, exts: Extensions) bool {
     var extension_count: u32 = 0;
     vk.enumerateDeviceExtensionProperties(device, null, &extension_count, null) catch |err| {
         std.log.err("Failed to enumerate device extensions : {any}", .{err});
@@ -848,7 +846,7 @@ fn check_device_extensions(allocator: std.mem.Allocator, device: c.VkPhysicalDev
         return false;
     }
 
-    const extensions = allocator.alloc(c.VkExtensionProperties, extension_count) catch {
+    const extensions = allocator.alloc(vk.ExtensionProperties, extension_count) catch {
         std.log.err("Out of Memory", .{});
         return false;
     };
@@ -882,7 +880,7 @@ fn check_device_extensions(allocator: std.mem.Allocator, device: c.VkPhysicalDev
     return match_extensions == required_extensions.items.len;
 }
 
-fn check_device_swapchain_support(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) bool {
+fn check_device_swapchain_support(allocator: std.mem.Allocator, device: vk.PhysicalDevice, surface: vk.SurfaceKHR) bool {
     var formats_count: u32 = 0;
     vk.getPhysicalDeviceSurfaceFormatsKHR(device, surface, &formats_count, null) catch |err| {
         std.log.err("Failed to enumerates device supported formats: {any}", .{err});
@@ -894,7 +892,7 @@ fn check_device_swapchain_support(allocator: std.mem.Allocator, device: c.VkPhys
         return false;
     }
 
-    const formats = allocator.alloc(c.VkSurfaceFormatKHR, formats_count) catch {
+    const formats = allocator.alloc(vk.SurfaceFormatKHR, formats_count) catch {
         std.log.err("Out of Memory", .{});
         return false;
     };
@@ -916,7 +914,7 @@ fn check_device_swapchain_support(allocator: std.mem.Allocator, device: c.VkPhys
         return false;
     }
 
-    const present_modes = allocator.alloc(c.VkPresentModeKHR, present_mode_count) catch {
+    const present_modes = allocator.alloc(vk.PresentModeKHR, present_mode_count) catch {
         std.log.err("Out of Memory", .{});
         return false;
     };
@@ -930,7 +928,7 @@ fn check_device_swapchain_support(allocator: std.mem.Allocator, device: c.VkPhys
     return true;
 }
 
-fn fetch_queue_families(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) !struct { u32, ?u32 } {
+fn fetch_queue_families(allocator: std.mem.Allocator, device: vk.PhysicalDevice, surface: vk.SurfaceKHR) !struct { u32, ?u32 } {
     var family_count: u32 = 0;
     vk.getPhysicalDeviceQueueFamilyProperties(device, &family_count, null);
 
@@ -939,7 +937,7 @@ fn fetch_queue_families(allocator: std.mem.Allocator, device: c.VkPhysicalDevice
         return Error.DeviceError;
     }
 
-    const queue_families = try allocator.alloc(c.VkQueueFamilyProperties, family_count);
+    const queue_families = try allocator.alloc(vk.QueueFamilyProperties, family_count);
     defer allocator.free(queue_families);
 
     vk.getPhysicalDeviceQueueFamilyProperties(device, &family_count, queue_families.ptr);
@@ -949,9 +947,9 @@ fn fetch_queue_families(allocator: std.mem.Allocator, device: c.VkPhysicalDevice
 
     for (queue_families, 0..) |queue_family, index| {
         if (queue_family.queueCount > 0) {
-            if (queue_family.queueFlags & c.VK_QUEUE_GRAPHICS_BIT != 0) {
+            if (queue_family.queueFlags.graphics_bit) {
                 // check presentation support
-                var present_support: c.VkBool32 = c.VK_FALSE;
+                var present_support: u32 = 0;
                 vk.getPhysicalDeviceSurfaceSupportKHR(device, @as(u32, @intCast(index)), surface, &present_support) catch |err| {
                     std.log.warn("An error was raised while checking presentation support : {any}", .{err});
                     continue;
@@ -962,7 +960,7 @@ fn fetch_queue_families(allocator: std.mem.Allocator, device: c.VkPhysicalDevice
                     continue;
                 }
             }
-            else if (queue_family.queueFlags & c.VK_QUEUE_COMPUTE_BIT != 0) {
+            else if (queue_family.queueFlags.compute_bit) {
                 // get compute queue
                 compute_queue_index = @intCast(index);
                 continue;
@@ -980,14 +978,14 @@ fn fetch_queue_families(allocator: std.mem.Allocator, device: c.VkPhysicalDevice
     };
 }
 
-fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevice, graphic_index: u32, compute_index: ?u32, layers: Layers, extensions: Extensions) !c.VkDevice {
+fn create_device(allocator: std.mem.Allocator, physical_device: vk.PhysicalDevice, graphic_index: u32, compute_index: ?u32, layers: Layers, extensions: Extensions) !vk.Device {
     // queues info
-    var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).empty;
+    var queue_create_infos = std.ArrayList(vk.DeviceQueueCreateInfo).empty;
     defer queue_create_infos.deinit(allocator);
 
     var queue_priority: f32 = 0.0;
-    const graphic_graphic_queue_create_info = c.VkDeviceQueueCreateInfo {
-        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+    const graphic_graphic_queue_create_info = vk.DeviceQueueCreateInfo {
+        .sType = .device_queue_create_info,
         .queueFamilyIndex = graphic_index,
         .queueCount = 1,
         .pQueuePriorities = &queue_priority
@@ -996,8 +994,8 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
     try queue_create_infos.append(allocator, graphic_graphic_queue_create_info);
 
     if (compute_index) |index| {
-        const compute_queue_create_info = c.VkDeviceQueueCreateInfo {
-            .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        const compute_queue_create_info = vk.DeviceQueueCreateInfo {
+            .sType = .device_queue_create_info,
             .queueFamilyIndex = index,
             .queueCount = 1,
             .pQueuePriorities = &queue_priority
@@ -1007,17 +1005,17 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
     }
 
     // device features
-    const device_features = c.VkPhysicalDeviceFeatures {
+    const device_features = vk.PhysicalDeviceFeatures {
         .fillModeNonSolid = c.VK_TRUE,
     };
 
-    const features_vulkan12 = c.VkPhysicalDeviceVulkan12Features {
-        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+    const features_vulkan12 = vk.PhysicalDeviceVulkan12Features {
+        .sType = .physical_device_vulkan_1_2_features,
         .bufferDeviceAddress = c.VK_TRUE,
     };
 
-    const features_vulkan13 = c.VkPhysicalDeviceVulkan13Features {
-        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    const features_vulkan13 = vk.PhysicalDeviceVulkan13Features {
+        .sType = .physical_device_vulkan_1_3_features,
         .pNext = @constCast(@ptrCast(&features_vulkan12)),
         .synchronization2 = if (extensions.VK_KHR_synchronization2) c.VK_TRUE else c.VK_FALSE,
     };
@@ -1042,9 +1040,9 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
         try extensions_names.append(allocator, "VK_KHR_synchronization2");
     }
 
-    const device_create_info = c.VkDeviceCreateInfo {
-        .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = &features_vulkan13,
+    const device_create_info = vk.DeviceCreateInfo {
+        .sType = .device_create_info,
+        .pNext = @ptrCast(&features_vulkan13),
         .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
         .pQueueCreateInfos = queue_create_infos.items.ptr,
 
@@ -1057,7 +1055,7 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
         .pEnabledFeatures = &device_features
     };
 
-    var device: c.VkDevice = undefined;
+    var device: vk.Device = undefined;
     vk.createDevice(physical_device, &device_create_info, null, &device) catch |err| {
         std.log.err("Failed to create device : {any}", .{err});
         return err;
@@ -1066,30 +1064,30 @@ fn create_device(allocator: std.mem.Allocator, physical_device: c.VkPhysicalDevi
     return device;
 }
 
-fn create_queue(device: c.VkDevice, family_index: u32) c.VkQueue {
-    const queue_info = c.VkDeviceQueueInfo2 {
-        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+fn create_queue(device: vk.Device, family_index: u32) vk.Queue {
+    const queue_info = vk.DeviceQueueInfo2 {
+        .sType = .device_queue_info_2,
         .queueFamilyIndex = family_index,
         .queueIndex = 0
     };
 
-    var queue: c.VkQueue = undefined;
-    c.vkGetDeviceQueue2(device, &queue_info, &queue);
+    var queue: vk.Queue = undefined;
+    vk.getDeviceQueue2(device, &queue_info, &queue);
 
     return queue;
 }
 
-fn create_vma(instance: c.VkInstance, physical_device: c.VkPhysicalDevice, device: c.VkDevice) !c.VmaAllocator {
+fn create_vma(instance: vk.Instance, physical_device: vk.PhysicalDevice, device: vk.Device) !c.VmaAllocator {
     const create_allocator_info = c.VmaAllocatorCreateInfo {
-        .instance = instance,
-        .physicalDevice = physical_device,
-        .device = device,
+        .instance = vk_interop.instanceToC(instance),
+        .physicalDevice = vk_interop.physicalDeviceToC(physical_device),
+        .device = vk_interop.deviceToC(device),
         .vulkanApiVersion = c.VK_API_VERSION_1_4,
         .flags = c.VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT
     };
 
     var allocator: c.VmaAllocator = undefined;
-    vk.vmaCreateAllocator(&create_allocator_info, &allocator) catch |err| {
+    vk_interop.vmaCreateAllocator(&create_allocator_info, &allocator) catch |err| {
         std.log.err("Failed to create vulkan memory allocator : {any}", .{err});
         return err;
     };
@@ -1097,11 +1095,11 @@ fn create_vma(instance: c.VkInstance, physical_device: c.VkPhysicalDevice, devic
     return allocator;
 }
 
-fn print_physical_device_info(device: c.VkPhysicalDevice) void {
-    var properties: c.VkPhysicalDeviceProperties2 = .{
-        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+fn print_physical_device_info(device: vk.PhysicalDevice) void {
+    var properties: vk.PhysicalDeviceProperties2 = .{
+        .sType = .physical_device_properties_2,
     };
-    c.vkGetPhysicalDeviceProperties2(device, &properties);
+    vk.getPhysicalDeviceProperties2(device, &properties);
 
     std.log.info("Device Info", .{});
     std.log.info("Name: {s}", .{ properties.properties.deviceName });
@@ -1110,8 +1108,8 @@ fn print_physical_device_info(device: c.VkPhysicalDevice) void {
     std.log.info("Driver: {d}", .{ properties.properties.driverVersion });
 }
 
-fn current_window_extent(window: *c.SDL_Window) !c.VkExtent2D {
-    var extent: c.VkExtent2D = .{ 
+fn current_window_extent(window: *c.SDL_Window) !vk.Extent2D {
+    var extent: vk.Extent2D = .{
         .width = 0,
         .height = 0
     };
@@ -1124,23 +1122,22 @@ fn current_window_extent(window: *c.SDL_Window) !c.VkExtent2D {
     return extent;
 }
 
-fn transition_image_layout(cmd: c.VkCommandBuffer, image: c.VkImage, current_layout: c.VkImageLayout, new_layout: c.VkImageLayout) void {
-    const aspect_mask: c.VkImageAspectFlags = if (new_layout == c.VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) c.VK_IMAGE_ASPECT_DEPTH_BIT else c.VK_IMAGE_ASPECT_COLOR_BIT;
+fn transition_image_layout(cmd: vk.CommandBuffer, image: vk.Image, current_layout: vk.ImageLayout, new_layout: vk.ImageLayout) void {
+    const aspect_mask: vk.ImageAspectFlags = if (new_layout == .depth_attachment_optimal) .{ .depth_bit = true } else .{ .color_bit = true };
 
-	const image_barrier = c.VkImageMemoryBarrier2 {
-		.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-		.pNext = null,
+	const image_barrier = vk.ImageMemoryBarrier2 {
+		.sType = .image_memory_barrier_2,
 
-		.srcStageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		.srcAccessMask = c.VK_ACCESS_2_MEMORY_WRITE_BIT,
-		.dstStageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		.dstAccessMask = c.VK_ACCESS_2_MEMORY_WRITE_BIT | c.VK_ACCESS_2_MEMORY_READ_BIT,
+		.srcStageMask = .{ .all_commands_bit = true },
+		.srcAccessMask = .{ .memory_write_bit = true },
+		.dstStageMask = .{ .all_commands_bit = true },
+		.dstAccessMask = .{ .memory_write_bit = true, .memory_read_bit = true },
 
 		.oldLayout = current_layout,
 		.newLayout = new_layout,
 
 		.image = image,
-		.subresourceRange = c.VkImageSubresourceRange {
+		.subresourceRange = vk.ImageSubresourceRange {
 		    .aspectMask = aspect_mask,
 		    .baseMipLevel = 0,
 		    .levelCount = c.VK_REMAINING_MIP_LEVELS,
@@ -1149,80 +1146,70 @@ fn transition_image_layout(cmd: c.VkCommandBuffer, image: c.VkImage, current_lay
 	    },
 	};
 
-	const dep_info = c.VkDependencyInfo {
-		.sType = c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+	const dep_info = vk.DependencyInfo {
+		.sType = .dependency_info,
 
-		.pNext = null,
-		
-		.dependencyFlags = 0,
-		.memoryBarrierCount = 0,
-		.pMemoryBarriers = null,
-		.bufferMemoryBarrierCount = 0,
-		.pBufferMemoryBarriers = null,
-		
 		.imageMemoryBarrierCount = 1,
 		.pImageMemoryBarriers = &image_barrier,
 	};
 
-    c.vkCmdPipelineBarrier2(cmd, &dep_info);
+    vk.cmdPipelineBarrier2(cmd, &dep_info);
 }
 
-fn blit_image(cmd: c.VkCommandBuffer, source: c.VkImage, destination: c.VkImage, srcSize: c.VkExtent2D, dstSize: c.VkExtent2D) void {
-    const empty_offset = c.VkOffset3D {
+fn blit_image(cmd: vk.CommandBuffer, source: vk.Image, destination: vk.Image, srcSize: vk.Extent2D, dstSize: vk.Extent2D) void {
+    const empty_offset = vk.Offset3D {
         .x = 0,
         .y = 0,
         .z = 0,
     };
-    
-    const src_offset = c.VkOffset3D {
+
+    const src_offset = vk.Offset3D {
         .x = @intCast(srcSize.width),
         .y = @intCast(srcSize.height),
         .z = 1,
     };
 
-    const dst_offset = c.VkOffset3D {
+    const dst_offset = vk.Offset3D {
         .x = @intCast(dstSize.width),
         .y = @intCast(dstSize.height),
         .z = 1,
     };
-    
-    const blit_region = c.VkImageBlit2 {
-        .sType = c.VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
-        .pNext = null,
 
-        .srcOffsets = [_]c.VkOffset3D{ empty_offset, src_offset },
-        .dstOffsets = [_]c.VkOffset3D{ empty_offset, dst_offset },
+    const blit_region = vk.ImageBlit2 {
+        .sType = .image_blit_2,
 
-        .srcSubresource = c.VkImageSubresourceLayers {
-            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+        .srcOffsets = [_]vk.Offset3D{ empty_offset, src_offset },
+        .dstOffsets = [_]vk.Offset3D{ empty_offset, dst_offset },
+
+        .srcSubresource = vk.ImageSubresourceLayers {
+            .aspectMask = .{ .color_bit = true },
             .baseArrayLayer = 0,
             .layerCount = 1,
             .mipLevel = 0,
         },
 
-        .dstSubresource = c.VkImageSubresourceLayers {
-            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+        .dstSubresource = vk.ImageSubresourceLayers {
+            .aspectMask = .{ .color_bit = true },
             .baseArrayLayer = 0,
             .layerCount = 1,
             .mipLevel = 0,
         },
     };
 
-	const blit_image_info = c.VkBlitImageInfo2 {
-        .sType = c.VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
-        .pNext = null,
+	const blit_image_info = vk.BlitImageInfo2 {
+        .sType = .blit_image_info_2,
 
         .dstImage = destination,
-	    .dstImageLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	    .dstImageLayout = .transfer_dst_optimal,
 	    .srcImage = source,
-	    .srcImageLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-	    .filter = c.VK_FILTER_LINEAR,
+	    .srcImageLayout = .transfer_src_optimal,
+	    .filter = .linear,
 	    .regionCount = 1,
 	    .pRegions = &blit_region,
     };
-	
 
-	c.vkCmdBlitImage2(cmd, &blit_image_info);
+
+	vk.cmdBlitImage2(cmd, &blit_image_info);
 }
 
 pub const Error = error {
@@ -1239,4 +1226,4 @@ pub const Error = error {
 const std = @import("std");
 const c = @import("c");
 const vk = @import("vk");
-const allocators = @import("graphics/allocators.zig");
+const vk_interop = @import("graphics/vk_interop.zig");
