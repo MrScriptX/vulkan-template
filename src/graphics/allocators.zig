@@ -1,18 +1,14 @@
-pub const PoolSizeRatio = struct {
-    kind: vk.DescriptorType,
-    ratio: f16
-};
-
 pub const Descriptor = struct {
     allocator: std.mem.Allocator,
+    device: vk.Device,
 
-    pool_ratios: std.ArrayList(PoolSizeRatio),
+    pool_ratios: std.ArrayList(descriptors.PoolSizeRatio),
     full_pools: std.ArrayList(vk.DescriptorPool),
     ready_pools: std.ArrayList(vk.DescriptorPool),
     sets_per_pool: u32,
 
-    pub fn init(allocator: std.mem.Allocator, device: vk.Device, max_sets: u32, ratios: []const PoolSizeRatio) !Descriptor {
-        var pool_ratios = std.ArrayList(PoolSizeRatio).empty;
+    pub fn init(allocator: std.mem.Allocator, device: vk.Device, max_sets: u32, ratios: []const descriptors.PoolSizeRatio) !Descriptor {
+        var pool_ratios = std.ArrayList(descriptors.PoolSizeRatio).empty;
         pool_ratios.appendSlice(allocator, ratios) catch |err| {
             std.log.err("failed to allocate pool ratios. error : {any}", .{err});
             return err;
@@ -29,6 +25,7 @@ pub const Descriptor = struct {
 
         return .{
             .allocator = allocator,
+            .device = device,
             .full_pools = std.ArrayList(vk.DescriptorPool).empty,
             .ready_pools = ready_pools,
             .pool_ratios = pool_ratios,
@@ -49,9 +46,50 @@ pub const Descriptor = struct {
 
         self.pool_ratios.deinit(self.allocator);
     }
+
+    pub fn getOrCreate(self: *Descriptor) !vk.DescriptorPool {
+        const pool = self.ready_pools.pop();
+        if (pool) |p| {
+            return p;
+        }
+
+        const new_pool = create_descriptor_pool(self.allocator, self.device, self.sets_per_pool, self.pool_ratios.items) catch |err| {
+            std.log.err("failed to create new descriptor pool. error : {any}", .{ err });
+            return err;
+        };
+
+        self.sets_per_pool = @intFromFloat(@as(f32, @floatFromInt(self.sets_per_pool)) * 1.5);
+        if (self.sets_per_pool > 4092) {
+            self.sets_per_pool = 4092;
+        }
+
+        return new_pool;
+    }
+
+    pub fn allocate(self: *Descriptor, layout: vk.DescriptorSetLayout) !vk.DescriptorSet {
+        const pool = self.getOrCreate() catch |err| {
+            std.log.err("failed to fetch a descriptor pool. error : {any}", .{ err });
+            return err;
+        };
+
+        const create_set_info = vk.DescriptorSetAllocateInfo {
+            .sType = vk.StructureType.descriptor_set_allocate_info,
+            .descriptorPool = pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &layout
+        };
+
+        var descriptor_set: vk.DescriptorSet = undefined;
+        vk.allocateDescriptorSets(self.device, &create_set_info, &descriptor_set) catch |err| {
+            std.log.err("failed to allocate descriptor sets. error : {any}", .{ err });
+            return err;
+        };
+
+        return descriptor_set;
+    }
 };
 
-fn create_descriptor_pool(allocator: std.mem.Allocator, device: vk.Device, max_sets: u32, pool_ratios: []const PoolSizeRatio) !vk.DescriptorPool {
+fn create_descriptor_pool(allocator: std.mem.Allocator, device: vk.Device, max_sets: u32, pool_ratios: []const descriptors.PoolSizeRatio) !vk.DescriptorPool {
     var pool_sizes = std.ArrayList(vk.DescriptorPoolSize).empty;
     defer pool_sizes.deinit(allocator);
 
@@ -84,3 +122,4 @@ fn create_descriptor_pool(allocator: std.mem.Allocator, device: vk.Device, max_s
 
 const std = @import("std");
 const vk = @import("vk");
+const descriptors = @import("descriptors.zig");

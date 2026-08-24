@@ -433,6 +433,8 @@ pub const Renderer = struct {
     depth_image: Image,
 
     descriptor_allocator: allocators.Descriptor, // per render image descriptor allocator
+    descriptor_set: vk.DescriptorSet,
+    descriptor_set_layout: vk.DescriptorSetLayout, 
 
     pub fn init(allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
@@ -502,14 +504,25 @@ pub const Renderer = struct {
         errdefer depth_image.deinit(device, vma);
 
         // create global descriptor allocator 
-        const pool_sizes = [_]allocators.PoolSizeRatio {
+        const pool_sizes = [_]descriptors.PoolSizeRatio {
             .{ .kind = vk.DescriptorType.storage_image, .ratio = 1 }
         };
 
-        const da = allocators.Descriptor.init(allocator, device, 12, &pool_sizes) catch |err| {
+        var da = allocators.Descriptor.init(allocator, device, 12, &pool_sizes) catch |err| {
             std.log.err("failed to create descriptor allocator.", .{});
             return err;
         };
+
+        var layout_builder = descriptors.LayoutBuilder.init(allocator);
+
+        const shader_stages: vk.ShaderStageFlags = .{
+            .compute_bit = true
+        };
+        try layout_builder.addBinding(0, .storage_image, shader_stages);
+        const descriptor_set_layout = try layout_builder.build(device, .{});
+        const descriptor_set = try da.allocate(descriptor_set_layout);
+
+        // TODO : write descriptor set
 
         return .{
             .instance = instance,
@@ -527,7 +540,9 @@ pub const Renderer = struct {
             .render_image = render_image,
             .depth_image = depth_image,
 
-            .descriptor_allocator = da
+            .descriptor_allocator = da,
+            .descriptor_set_layout = descriptor_set_layout,
+            .descriptor_set = descriptor_set
         };
     }
 
@@ -536,6 +551,7 @@ pub const Renderer = struct {
             std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
         };
 
+        vk.destroyDescriptorSetLayout(self.device, self.descriptor_set_layout, null);
         self.descriptor_allocator.deinit(self.device);
 
         self.depth_image.deinit(self.device, self.vma);
@@ -1244,3 +1260,4 @@ const c = @import("c");
 const vk = @import("vk");
 const vk_interop = @import("graphics/vk_interop.zig");
 const allocators = @import("graphics/allocators.zig");
+const descriptors = @import("graphics/descriptors.zig");
