@@ -1239,3 +1239,4 @@ pub const Error = error {
 const std = @import("std");
 const c = @import("c");
 const vk = @import("vk");
+const allocators = @import("graphics/allocators.zig");
