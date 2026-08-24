@@ -432,6 +432,8 @@ pub const Renderer = struct {
     render_image: Image, // image use to record scene command
     depth_image: Image,
 
+    descriptor_allocator: allocators.Descriptor, // per render image descriptor allocator
+
     pub fn init(allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
             .VK_LAYER_KHRONOS_validation = true // when debug
@@ -491,13 +493,23 @@ pub const Renderer = struct {
         const render_image_usage: vk.ImageUsageFlags = .{ .transfer_src_bit = true, .storage_bit = true, .color_attachment_bit = true };
 
         const render_image = Image.init(vma, device, .r16g16b16a16_sfloat, render_extent, render_image_usage, .{ .color_bit = true }) catch |err| {
-            std.log.err("Failed to create render image", .{});
+            std.log.err("failed to create render image", .{});
             return err;
         };
         errdefer render_image.deinit(device, vma);
 
         const depth_image = try Image.init(vma, device, .d32_sfloat, render_extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
         errdefer depth_image.deinit(device, vma);
+
+        // create global descriptor allocator 
+        const pool_sizes = [_]allocators.PoolSizeRatio {
+            .{ .kind = vk.DescriptorType.storage_image, .ratio = 1 }
+        };
+
+        const da = allocators.Descriptor.init(allocator, device, 12, &pool_sizes) catch |err| {
+            std.log.err("failed to create descriptor allocator.", .{});
+            return err;
+        };
 
         return .{
             .instance = instance,
@@ -514,13 +526,17 @@ pub const Renderer = struct {
             .frames = frames,
             .render_image = render_image,
             .depth_image = depth_image,
+
+            .descriptor_allocator = da
         };
     }
 
-    pub fn deinit(self: *const Renderer, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Renderer, allocator: std.mem.Allocator) void {
         vk.deviceWaitIdle(self.device) catch |err| {
             std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
         };
+
+        self.descriptor_allocator.deinit(self.device);
 
         self.depth_image.deinit(self.device, self.vma);
         self.render_image.deinit(self.device, self.vma);
@@ -1227,3 +1243,4 @@ const std = @import("std");
 const c = @import("c");
 const vk = @import("vk");
 const vk_interop = @import("graphics/vk_interop.zig");
+const allocators = @import("graphics/allocators.zig");
