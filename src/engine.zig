@@ -106,7 +106,7 @@ const Frame = struct {
         };
 
         var command_buffer: c.VkCommandBuffer = undefined;
-        vk.allocateCommandBuffer(device, &command_buffer_info, &command_buffer) catch |err| {
+        vk.allocateCommandBuffers(device, &command_buffer_info, &command_buffer) catch |err| {
             std.log.err("Failed to allocate frame command buffer : {any}", .{ err });
             return err;
         };
@@ -952,7 +952,7 @@ fn fetch_queue_families(allocator: std.mem.Allocator, device: c.VkPhysicalDevice
             if (queue_family.queueFlags & c.VK_QUEUE_GRAPHICS_BIT != 0) {
                 // check presentation support
                 var present_support: c.VkBool32 = c.VK_FALSE;
-                vk.getPhysicalDeviceSurfaceSupportKHR(device, @intCast(index), surface, &present_support) catch |err| {
+                vk.getPhysicalDeviceSurfaceSupportKHR(device, @as(u32, @intCast(index)), surface, &present_support) catch |err| {
                     std.log.warn("An error was raised while checking presentation support : {any}", .{err});
                     continue;
                 };
@@ -1238,4 +1238,4 @@ pub const Error = error {
 
 const std = @import("std");
 const c = @import("c");
-const vk = @import("vk.zig");
+const vk = @import("vk");
