@@ -514,6 +514,7 @@ pub const Renderer = struct {
         };
 
         var layout_builder = descriptors.LayoutBuilder.init(allocator);
+        defer layout_builder.deinit();
 
         const shader_stages: vk.ShaderStageFlags = .{
             .compute_bit = true
