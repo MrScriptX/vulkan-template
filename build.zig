@@ -41,9 +41,6 @@ pub fn build(b: *std.Build) void {
         }
     });
 
-    // vk.zig bindings: generated at build time by the zephyr module from the
-    // Vulkan SDK's vk.xml (handles/enums/bitmasks/structs plus direct extern
-    // fn declarations, statically resolved by the linker against vulkan-1/vulkan).
     const zephyr_dep = b.dependency("zephyr", .{
         .target = target,
         .optimize = optimize,
