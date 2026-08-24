@@ -50,5 +50,43 @@ pub const LayoutBuilder = struct {
     }
 };
 
+// pub const Writer = struct {
+//     allocator: std.mem.Allocator,
+
+//     writes: std.ArrayList(vk.WriteDescriptorSet),
+//     images_info: std.ArrayList(vk.DescriptorImageInfo),
+
+//     pub fn init(allocator: std.mem.Allocator) Writer {
+//         return .{
+//             .allocator = allocator,
+//             .writes = std.ArrayList(vk.WriteDescriptorSet).empty,
+//             .images_info = std.ArrayList(vk.DescriptorImageInfo).empty
+//         };
+//     }
+
+//     pub fn deinit(self: *Writer) void {
+//         self.images_info.deinit(self.allocator);
+//         self.writes.deinit(self.allocator);
+//     }
+
+//     pub fn addImage(self: *Writer, sampler: vk.Sampler, image_view: vk.ImageView, image_layout: vk.ImageLayout) void {
+//         const image_descriptor_info = vk.DescriptorImageInfo {
+//             .sampler = sampler,
+//             .imageView = image_view,
+//             .imageLayout = image_layout
+//         };
+
+//         self.images_info.append(self.allocator, image_descriptor_info) catch |err| {
+//             std.log.err("failed to append descriptor image. error : {any}", .{ err });
+//             return err;
+//         };
+
+//         const image_write = vk.WriteDescriptorSet {
+//             .sType = .write_descriptor_set,
+//             .pImageInfo = &self.ima
+//         };
+//     }
+// };
+
 const std = @import("std");
 const vk = @import("vk");
