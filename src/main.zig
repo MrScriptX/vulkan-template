@@ -6,7 +6,7 @@ pub fn main() !void {
     }
     defer c.SDL_Quit();
 
-    const window = c.SDL_CreateWindow("Physics Simulation", 800, 600, c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE);
+    const window = c.SDL_CreateWindow("Vulkan Template", 800, 600, c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE);
     if (window == null) {
         const err = c.SDL_GetError();
         std.log.err("Window creation failed : {s}", .{err});
@@ -21,7 +21,7 @@ pub fn main() !void {
         std.log.debug("Memory check : {any}\n", .{ status });
     }
 
-    var renderer = engine.Renderer.init(allocator, "Physics Simulation", window.?) catch {
+    var renderer = engine.Renderer.init(allocator, "Vulkan Template", window.?) catch {
         std.log.err("Renderer initialization failed", .{});
         return;
     };
