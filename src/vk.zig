@@ -183,4 +183,4 @@ pub fn check_result(result: c.VkResult) Error!void {
     }
 }
 
-const c = @import("c.zig").c;
+const c = @import("c");

@@ -75,5 +75,5 @@ const Engine = struct {
 };
 
 const std = @import("std");
-const c = @import("c.zig").c; // TODO : update guide https://ziglang.org/download/0.16.0/release-notes.html#cImport-Moving-to-Build-System
+const c = @import("c");
 const engine = @import("engine.zig");

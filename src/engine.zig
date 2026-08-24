@@ -1237,5 +1237,5 @@ pub const Error = error {
 };
 
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("c");
 const vk = @import("vk.zig");

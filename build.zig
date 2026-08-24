@@ -4,26 +4,35 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // We will also create a module for our other entry point, 'main.zig'.
-    const mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+    // c modules
+    const c_translate = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize
+    });
+    const c_module = c_translate.createModule();
+
+    // SDL 3
+    const sdl = b.dependency("sdl", .{
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
-        .link_libcpp = true
+        .link_libc = true
     });
+    c_translate.addIncludePath(sdl.path("include")); 
+    c_module.addLibraryPath(sdl.path("lib/x64"));
+    c_module.linkSystemLibrary("SDL3", .{});
 
     // Vulkan SDK
     const vk_sdk_path = b.graph.environ_map.get("VULKAN_SDK") orelse @panic("VULKAN_SDK missing !");
-
-    mod.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/lib", .{ vk_sdk_path }) });
-    mod.addIncludePath(.{ .cwd_relative = b.fmt("{s}/include", .{ vk_sdk_path }) });
-
+    c_translate.addIncludePath(.{ .cwd_relative = b.fmt("{s}/include", .{ vk_sdk_path }) });
+    c_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/lib", .{ vk_sdk_path }) });
+    
     const vk_lib_name = if (target.result.os.tag == .windows) "vulkan-1" else "vulkan";
-    mod.linkSystemLibrary(vk_lib_name, .{});
+    c_module.linkSystemLibrary(vk_lib_name, .{});
 
     // VMA
-    mod.addCSourceFile(.{
+    c_module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/include", .{ vk_sdk_path }) });
+    c_module.addCSourceFile(.{
         .file = b.path("src/vk_mem_alloc.cpp"),
         .language = .cpp,
         .flags = &.{
@@ -32,21 +41,25 @@ pub fn build(b: *std.Build) void {
         }
     });
 
-    // SDL3
-    const sdl = b.dependency("sdl", .{
+    // We will also create a module for our other entry point, 'main.zig'.
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true
+        .link_libc = true,
+        .link_libcpp = true,
+        .imports = &.{
+            .{
+                .name = "c",
+                .module = c_module
+            }
+        }
     });
-    mod.addIncludePath(sdl.path("include"));
-    mod.addLibraryPath(sdl.path("lib/x64"));
-
-    mod.linkSystemLibrary("SDL3", .{});    
 
     // create exe
     const exe = b.addExecutable(.{
         .name = "vulkan-template",
-        .root_module = mod,
+        .root_module = mod
     });
 
     b.installArtifact(exe);
