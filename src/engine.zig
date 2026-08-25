@@ -436,7 +436,9 @@ pub const Renderer = struct {
     descriptor_set: vk.DescriptorSet,
     descriptor_set_layout: vk.DescriptorSetLayout, 
 
-    pub fn init(allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
+    pipeline: shaders.ComputePipeline,
+
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
             .VK_LAYER_KHRONOS_validation = true // when debug
         };
@@ -529,6 +531,17 @@ pub const Renderer = struct {
         try descriptor_writer.addImage(0, render_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
         descriptor_writer.write(device, descriptor_set);
 
+        // create a dummy compute pipeline for test
+        const shader_module = try shaders.load_shader_module(io, allocator, "shaders/gradiant.spirv", device);
+        defer vk.destroyShaderModule(device, shader_module, null);
+
+        const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
+            .sType = .pipeline_layout_create_info,
+            .setLayoutCount = 1,
+            .pSetLayouts = &descriptor_set_layout
+        };
+        const pipeline = try shaders.ComputePipeline.init(device, pipeline_layout_info, shader_module);
+
         return .{
             .instance = instance,
             .surface = surface,
@@ -547,7 +560,9 @@ pub const Renderer = struct {
 
             .descriptor_allocator = da,
             .descriptor_set_layout = descriptor_set_layout,
-            .descriptor_set = descriptor_set
+            .descriptor_set = descriptor_set,
+
+            .pipeline = pipeline
         };
     }
 
@@ -555,6 +570,8 @@ pub const Renderer = struct {
         vk.deviceWaitIdle(self.device) catch |err| {
             std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
         };
+
+        self.pipeline.deinit();
 
         self.descriptor_allocator.deinit(self.device);
         vk.destroyDescriptorSetLayout(self.device, self.descriptor_set_layout, null);
@@ -1266,3 +1283,4 @@ const vk = @import("vk");
 const vk_interop = @import("graphics/vk_interop.zig");
 const allocators = @import("graphics/allocators.zig");
 const descriptors = @import("graphics/descriptors.zig");
+const shaders = @import("graphics/shaders.zig");

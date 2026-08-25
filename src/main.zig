@@ -1,4 +1,4 @@
-pub fn main() !void {
+pub fn main(proc: std.process.Init) !void {
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
         const err = c.SDL_GetError();
         std.log.err("SDL initialization failed : {s}", .{err});
@@ -21,7 +21,7 @@ pub fn main() !void {
         std.log.debug("Memory check : {any}\n", .{ status });
     }
 
-    var renderer = engine.Renderer.init(allocator, "Vulkan Template", window.?) catch {
+    var renderer = engine.Renderer.init(proc.io, allocator, "Vulkan Template", window.?) catch {
         std.log.err("Renderer initialization failed", .{});
         return;
     };
