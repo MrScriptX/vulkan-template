@@ -401,20 +401,6 @@ const Swapchain = struct {
     }
 };
 
-pub fn Scene(comptime T: type) type {
-    return struct {
-        scene: T,
-
-        pub fn init() Scene(T) {
-            return .{};
-        }
-
-        pub fn render(self: *const Scene(T)) void {
-            self.scene.draw();
-        }
-    };
-}
-
 pub const Renderer = struct {
     instance: vk.Instance,
     surface: vk.SurfaceKHR,
@@ -605,7 +591,7 @@ pub const Renderer = struct {
         vk.destroyInstance(self.instance, null);
     }
 
-    pub fn draw(self: *const Renderer, frame_index: u32) !void {
+    pub fn draw(self: *const Renderer, frame_index: u32, scene: *gradiant.GradiantScene) !void {
         const frame = &self.frames[frame_index];
 
         vk.waitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, std.math.maxInt(u64)) catch |err| {
@@ -629,6 +615,8 @@ pub const Renderer = struct {
             std.log.warn("Failed to begin recording draw command for frame {x}...", .{frame_index});
             return Error.SkipImage;
         };
+
+        scene.draw(cmd);
 
         transition_image_layout(cmd, self.render_image.image, .@"undefined", .general);
 
@@ -1304,3 +1292,5 @@ const vk_interop = @import("graphics/vk_interop.zig");
 const allocators = @import("graphics/allocators.zig");
 const descriptors = @import("graphics/descriptors.zig");
 const shaders = @import("graphics/shaders.zig");
+
+const gradiant = @import("scenes/gradiant.zig");

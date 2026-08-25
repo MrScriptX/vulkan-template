@@ -27,9 +27,7 @@ pub fn main(proc: std.process.Init) !void {
     };
     defer renderer.deinit(allocator);
 
-    var app: Engine = .{
-        .renderer = &renderer
-    };
+    var app = Engine.init(&renderer);
 
     var quit = false;
     while (!quit) {
@@ -66,14 +64,27 @@ pub fn main(proc: std.process.Init) !void {
 const Engine = struct {
     frame_count: u32 = 0,
     renderer: *const engine.Renderer,
+    scene: scenes.GradiantScene,
+
+    pub fn init(renderer: *const engine.Renderer) Engine {
+        return .{
+            .renderer = renderer,
+            .scene = scenes.GradiantScene.init()
+        };
+    }
 
     pub fn draw(self: *Engine) !void {
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
-        try self.renderer.draw(frame_index);
+        try self.renderer.draw(frame_index, &self.scene);
         self.frame_count += 1;
+    }
+
+    pub fn deinit(self: *Engine) void {
+        self.scene.deinit();
     }
 };
 
 const std = @import("std");
 const c = @import("c");
 const engine = @import("engine.zig");
+const scenes = @import("scenes/gradiant.zig");
