@@ -28,7 +28,7 @@ pub const ComputePipeline = struct {
         };
 
         var pipeline: vk.Pipeline = undefined;
-        vk.createComputePipelines(device, .null_handle, 0, &create_pipeline_info, null, &pipeline) catch |err| {
+        vk.createComputePipelines(device, .null_handle, 1, &create_pipeline_info, null, &pipeline) catch |err| {
             std.log.err("failed to create pipeline. error : {any}", .{err});
             return err;
         }; 

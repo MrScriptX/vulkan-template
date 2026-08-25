@@ -514,6 +514,7 @@ pub const Renderer = struct {
             std.log.err("failed to create descriptor allocator.", .{});
             return err;
         };
+        errdefer da.deinit(device);
 
         var layout_builder = descriptors.LayoutBuilder.init(allocator);
         defer layout_builder.deinit();
@@ -523,6 +524,8 @@ pub const Renderer = struct {
         };
         try layout_builder.addBinding(0, .storage_image, shader_stages);
         const descriptor_set_layout = try layout_builder.build(device, .{});
+        errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layout, null);
+
         const descriptor_set = try da.allocate(descriptor_set_layout);
 
         var descriptor_writer = descriptors.Writer.init(allocator);
@@ -532,7 +535,13 @@ pub const Renderer = struct {
         descriptor_writer.write(device, descriptor_set);
 
         // create a dummy compute pipeline for test
-        const shader_module = try shaders.load_shader_module(io, allocator, "shaders/gradiant.spirv", device);
+        const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
+        defer allocator.free(exe_dir);
+
+        const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gradiant.spirv", .{ exe_dir });
+        defer allocator.free(shader_path);
+
+        const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
         defer vk.destroyShaderModule(device, shader_module, null);
 
         const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
@@ -620,6 +629,25 @@ pub const Renderer = struct {
         transition_image_layout(cmd, self.render_image.image, .@"undefined", .general);
 
         // draw background
+        vk.cmdBindPipeline(cmd, .compute, self.pipeline.handle);
+
+        // const descriptor_sets_info = vk.BindDescriptorSetsInfo {
+        //     .sType = .bind_descriptor_sets_info,
+        //     .stageFlags = .{ 
+        //         .compute_bit = true
+        //     },
+        //     .layout = self.pipeline.layout,
+        //     .firstSet = 0,
+        //     .descriptorSetCount = 1,
+        //     .pDescriptorSets = &self.descriptor_set,
+        // };
+        // vk.cmdBindDescriptorSets2(cmd, &descriptor_sets_info);
+
+        vk.cmdBindDescriptorSets(cmd, .compute, self.pipeline.layout, 0, 1, &self.descriptor_set, 0, null);
+
+        const group_x = self.render_image.extent.width / 16;
+        const group_y = self.render_image.extent.height / 16;
+        vk.cmdDispatch(cmd, group_x, group_y, 1);
 
         transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
         transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);
