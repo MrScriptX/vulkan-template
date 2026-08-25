@@ -523,7 +523,11 @@ pub const Renderer = struct {
         const descriptor_set_layout = try layout_builder.build(device, .{});
         const descriptor_set = try da.allocate(descriptor_set_layout);
 
-        // TODO : write descriptor set
+        var descriptor_writer = descriptors.Writer.init(allocator);
+        defer descriptor_writer.deinit();
+
+        try descriptor_writer.addImage(0, render_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
+        descriptor_writer.write(device, descriptor_set);
 
         return .{
             .instance = instance,
@@ -552,8 +556,8 @@ pub const Renderer = struct {
             std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
         };
 
-        vk.destroyDescriptorSetLayout(self.device, self.descriptor_set_layout, null);
         self.descriptor_allocator.deinit(self.device);
+        vk.destroyDescriptorSetLayout(self.device, self.descriptor_set_layout, null);
 
         self.depth_image.deinit(self.device, self.vma);
         self.render_image.deinit(self.device, self.vma);

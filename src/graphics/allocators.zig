@@ -71,6 +71,11 @@ pub const Descriptor = struct {
             std.log.err("failed to fetch a descriptor pool. error : {any}", .{ err });
             return err;
         };
+        defer {
+            self.full_pools.append(self.allocator, pool) catch |err| {
+                std.log.err("failed to set pool to full pool. error : {any}", .{ err });
+            };
+        }
 
         const create_set_info = vk.DescriptorSetAllocateInfo {
             .sType = vk.StructureType.descriptor_set_allocate_info,

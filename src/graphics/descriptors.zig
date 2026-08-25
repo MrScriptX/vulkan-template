@@ -50,43 +50,78 @@ pub const LayoutBuilder = struct {
     }
 };
 
-// pub const Writer = struct {
-//     allocator: std.mem.Allocator,
+/// Writer can be probably improve to batch even more writes
+/// Example would be to use a struct to store info for WriteDescriptorSet
+/// along side DescriptorImageInfo.
+pub const Writer = struct {
+    allocator: std.mem.Allocator,
 
-//     writes: std.ArrayList(vk.WriteDescriptorSet),
-//     images_info: std.ArrayList(vk.DescriptorImageInfo),
+    writes: std.ArrayList(vk.WriteDescriptorSet),
+    images_info: std.ArrayList(*vk.DescriptorImageInfo),
 
-//     pub fn init(allocator: std.mem.Allocator) Writer {
-//         return .{
-//             .allocator = allocator,
-//             .writes = std.ArrayList(vk.WriteDescriptorSet).empty,
-//             .images_info = std.ArrayList(vk.DescriptorImageInfo).empty
-//         };
-//     }
+    pub fn init(allocator: std.mem.Allocator) Writer {
+        return .{
+            .allocator = allocator,
+            .writes = std.ArrayList(vk.WriteDescriptorSet).empty,
+            .images_info = std.ArrayList(*vk.DescriptorImageInfo).empty
+        };
+    }
 
-//     pub fn deinit(self: *Writer) void {
-//         self.images_info.deinit(self.allocator);
-//         self.writes.deinit(self.allocator);
-//     }
+    pub fn deinit(self: *Writer) void {
+        for (self.images_info.items) |info| {
+            self.allocator.destroy(info);
+        }
+        self.images_info.deinit(self.allocator);
 
-//     pub fn addImage(self: *Writer, sampler: vk.Sampler, image_view: vk.ImageView, image_layout: vk.ImageLayout) void {
-//         const image_descriptor_info = vk.DescriptorImageInfo {
-//             .sampler = sampler,
-//             .imageView = image_view,
-//             .imageLayout = image_layout
-//         };
+        self.writes.deinit(self.allocator);
+    }
 
-//         self.images_info.append(self.allocator, image_descriptor_info) catch |err| {
-//             std.log.err("failed to append descriptor image. error : {any}", .{ err });
-//             return err;
-//         };
+    pub fn clear(self: *Writer) void {
+        for (self.images_info.items) |info| {
+            self.allocator.free(info);
+        }
+        self.images_info.clearRetainingCapacity();
+    }
 
-//         const image_write = vk.WriteDescriptorSet {
-//             .sType = .write_descriptor_set,
-//             .pImageInfo = &self.ima
-//         };
-//     }
-// };
+    pub fn addImage(self: *Writer, binding: u32, image_view: vk.ImageView, sampler: vk.Sampler, image_layout: vk.ImageLayout, kind: vk.DescriptorType) !void {
+        const image_descriptor_info = self.allocator.create(vk.DescriptorImageInfo) catch |err| {
+            std.log.err("failed to allocate DescriptorImageInfo. error : {any}", .{ err });
+            return err;
+        };
+
+        image_descriptor_info.* = vk.DescriptorImageInfo {
+            .sampler = sampler,
+            .imageView = image_view,
+            .imageLayout = image_layout
+        };
+
+        self.images_info.append(self.allocator, image_descriptor_info) catch |err| {
+            std.log.err("failed to append descriptor image. error : {any}", .{ err });
+            return err;
+        };
+
+        const image_write = vk.WriteDescriptorSet {
+            .sType = .write_descriptor_set,
+            .pImageInfo = image_descriptor_info,
+            .dstBinding = binding,
+            .descriptorCount = 1,
+            .descriptorType = kind,
+        };
+
+        self.writes.append(self.allocator, image_write) catch |err| {
+            std.log.err("failed to append descriptor set write. error : {any}", .{ err });
+            return err;
+        };
+    }
+
+    pub fn write(self: *Writer, device: vk.Device, set: vk.DescriptorSet) void {
+        for (self.writes.items) |*w| {
+            w.dstSet = set;
+        }
+
+        vk.updateDescriptorSets(device, @intCast(self.writes.items.len), self.writes.items.ptr, 0, null);
+    }
+};
 
 const std = @import("std");
 const vk = @import("vk");
