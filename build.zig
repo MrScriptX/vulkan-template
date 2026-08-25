@@ -1,4 +1,5 @@
 const std = @import("std");
+const shaders_build = @import("modules/shaders/build.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -29,6 +30,10 @@ pub fn build(b: *std.Build) void {
     
     const vk_lib_name = if (target.result.os.tag == .windows) "vulkan-1" else "vulkan";
     c_module.linkSystemLibrary(vk_lib_name, .{});
+
+    // Shaders
+    const shaders_out_dir = b.getInstallPath(.bin, "shaders");
+    const shaders_step = shaders_build.addCompileShadersStep(b, vk_sdk_path, shaders_out_dir);
 
     // VMA
     c_module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/include", .{ vk_sdk_path }) });
@@ -74,10 +79,12 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(exe);
+    b.getInstallStep().dependOn(shaders_step);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.addPathDir(sdl.path("lib/x64").getPath(b));
     run_cmd.step.dependOn(b.getInstallStep());
+    run_cmd.step.dependOn(shaders_step);
 
 
     if (b.args) |args| {
