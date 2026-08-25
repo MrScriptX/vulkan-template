@@ -17,6 +17,14 @@ pub const Error = error {
     Unknown
 };
 
+// Themselves VK_VERSION_1_0 baseline, but their C return type
+// (PFN_vkVoidFunction, a bare function-pointer typedef) is the one shape the
+// generic emitter can't render -- hand-declared here instead of generated.
+// Used by the generated loadInstanceCommands/loadDeviceCommands to resolve
+// version/extension-gated commands (see emit.zig's writeCommands).
+pub extern fn vkGetInstanceProcAddr(instance: Instance, pName: [*c]const u8) callconv(.c) ?*const anyopaque;
+pub extern fn vkGetDeviceProcAddr(device: Device, pName: [*c]const u8) callconv(.c) ?*const anyopaque;
+
 pub fn check_result(result: Result) Error!void {
     switch (result) {
         .success => return,

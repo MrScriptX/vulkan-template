@@ -43,10 +43,26 @@ pub const AggType = struct {
     members: []Member,
 };
 
+pub const CommandLevel = enum { global, instance, device };
+
 pub const Command = struct {
     c_name: []const u8,
     return_type: []const u8, // "void" or a Vk*/base type name
     params: []Member,
+    /// True if required unconditionally by <feature name="VK_VERSION_1_0"> --
+    /// guaranteed present on every conformant Vulkan 1.0+ driver, so it's
+    /// safe to bind statically. False means "gated": only introduced by a
+    /// later core version or by an extension, and must be resolved
+    /// dynamically (see emit.zig's writeCommands).
+    is_baseline: bool = true,
+    /// Which PFN loader (vkGetInstanceProcAddr vs vkGetDeviceProcAddr, or
+    /// neither) resolves this command, derived from its first parameter's
+    /// handle type. Only consulted for gated commands.
+    level: CommandLevel = .global,
+    /// Human-readable "what introduced this" label (e.g. "Vulkan 1.4" or
+    /// "VK_KHR_maintenance6"), baked into the gated wrapper's log message.
+    /// Empty string for baseline commands.
+    origin: []const u8 = "",
 };
 
 pub const Registry = struct {

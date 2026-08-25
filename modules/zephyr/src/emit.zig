@@ -525,6 +525,11 @@ fn isValidZigIdentifier(name: []const u8) bool {
 }
 
 fn writeCommands(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const model.Registry, universe: *const Universe, seen: *Seen) !void {
+    var instance_level_gated: std.ArrayList([]const u8) = .empty;
+    defer instance_level_gated.deinit(gpa);
+    var device_level_gated: std.ArrayList([]const u8) = .empty;
+    defer device_level_gated.deinit(gpa);
+
     for (reg.commands) |cmd| {
         var sig: std.ArrayList(u8) = .empty;
         defer sig.deinit(gpa);
@@ -557,11 +562,65 @@ fn writeCommands(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const mo
             continue;
         }
 
-        // 1. the raw extern fn -- always emitted, resolved by the linker
-        //    directly against the statically-linked Vulkan loader.
-        try out.print(gpa, "pub extern fn {s}({s}) callconv(.c) {s};\n", .{ cmd.c_name, sig.items, ret.items });
+        const is_result = std.mem.eql(u8, cmd.return_type, "VkResult");
 
-        // 2. a Zig-cased convenience wrapper on top of it.
+        if (!cmd.is_baseline) {
+            // Zig can't compile a function *body* under callconv(.c) (which
+            // resolves to the Windows x64 C convention here) that takes a
+            // by-value fixed-size array parameter -- only extern
+            // declarations (no body to lower) are exempt. Affects a literal
+            // handful of commands registry-wide (e.g. the fragment shading
+            // rate combiner-ops commands); skip generating an unsafe
+            // reroute for them rather than emit code that fails to compile.
+            var has_value_array_param = false;
+            for (cmd.params) |p| {
+                if (p.type.pointer_depth == 0 and p.type.array_len != null) {
+                    has_value_array_param = true;
+                    break;
+                }
+            }
+            if (has_value_array_param) {
+                std.log.warn("vk_generator: skipping gated command '{s}' (by-value array parameter can't be given a stub body under this callconv)", .{cmd.c_name});
+                continue;
+            }
+        }
+
+        if (cmd.is_baseline) {
+            // 1a. the raw extern fn -- resolved by the linker directly
+            //     against the statically-linked Vulkan loader. Safe: every
+            //     VK_VERSION_1_0-required command is guaranteed present.
+            try out.print(gpa, "pub extern fn {s}({s}) callconv(.c) {s};\n", .{ cmd.c_name, sig.items, ret.items });
+        } else {
+            // 1b. gated command: not guaranteed present. Reroute to a stub
+            //     of the identical signature until (if ever) resolved to the
+            //     real driver function by loadInstanceCommands/
+            //     loadDeviceCommands. The stub logs and reports
+            //     unavailability the same way Vulkan itself would report a
+            //     missing extension/version.
+            try out.print(gpa, "fn {s}_unavailable({s}) callconv(.c) {s} {{\n", .{ cmd.c_name, sig.items, ret.items });
+            try out.print(gpa, "    _ = .{{ {s} }};\n", .{call_args.items});
+            try out.print(gpa,
+                \\    std.log.err("zephyr: {s} is not available (requires {s}); the active instance/device does not support it", .{{}});
+                \\
+            , .{ cmd.c_name, cmd.origin });
+            if (is_result) {
+                try out.print(gpa, "    return .error_extension_not_present;\n}}\n", .{});
+            } else if (std.mem.eql(u8, ret.items, "void")) {
+                try out.print(gpa, "}}\n", .{});
+            } else {
+                try out.print(gpa, "    return std.mem.zeroes({s});\n}}\n", .{ret.items});
+            }
+            try out.print(gpa, "pub var {s}: *const fn ({s}) callconv(.c) {s} = &{s}_unavailable;\n", .{ cmd.c_name, sig.items, ret.items, cmd.c_name });
+
+            switch (cmd.level) {
+                .global, .instance => try instance_level_gated.append(gpa, cmd.c_name),
+                .device => try device_level_gated.append(gpa, cmd.c_name),
+            }
+        }
+
+        // 2. a Zig-cased convenience wrapper on top of it -- identical
+        //    regardless of whether {c_name} above is an extern fn or a var
+        //    holding a function pointer; both call with the same syntax.
         var name_buf: [256]u8 = undefined;
         const zig_name = registry.zigCommandName(&name_buf, cmd.c_name);
         if (!try seen.tryReserve(gpa, zig_name)) {
@@ -569,11 +628,22 @@ fn writeCommands(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const mo
             continue;
         }
 
-        const is_result = std.mem.eql(u8, cmd.return_type, "VkResult");
         if (is_result) {
             try out.print(gpa, "pub fn {s}({s}) Error!void {{\n    try check_result({s}({s}));\n}}\n\n", .{ zig_name, sig.items, cmd.c_name, call_args.items });
         } else {
             try out.print(gpa, "pub fn {s}({s}) {s} {{\n    return {s}({s});\n}}\n\n", .{ zig_name, sig.items, ret.items, cmd.c_name, call_args.items });
         }
     }
+
+    try out.appendSlice(gpa, "pub fn loadInstanceCommands(instance: Instance) void {\n");
+    for (instance_level_gated.items) |name| {
+        try out.print(gpa, "    if (vkGetInstanceProcAddr(instance, \"{s}\")) |raw| {{ {s} = @ptrCast(raw); }}\n", .{ name, name });
+    }
+    try out.appendSlice(gpa, "}\n\n");
+
+    try out.appendSlice(gpa, "pub fn loadDeviceCommands(device: Device) void {\n");
+    for (device_level_gated.items) |name| {
+        try out.print(gpa, "    if (vkGetDeviceProcAddr(device, \"{s}\")) |raw| {{ {s} = @ptrCast(raw); }}\n", .{ name, name });
+    }
+    try out.appendSlice(gpa, "}\n\n");
 }

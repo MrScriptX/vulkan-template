@@ -452,6 +452,8 @@ pub const Renderer = struct {
         const instance = try create_instance(allocator, app_name, layers);
         errdefer vk.destroyInstance(instance, null);
 
+        vk.loadInstanceCommands(instance);
+
         const surface = try create_surface(window, instance);
         errdefer vk.destroySurfaceKHR(instance, surface, null);
 
@@ -465,6 +467,8 @@ pub const Renderer = struct {
 
         const device = try create_device(allocator, gpu, queue_indexes.@"0", queue_indexes.@"1", layers, extensions);
         errdefer vk.destroyDevice(device, null);
+
+        vk.loadDeviceCommands(device);
 
         const queues = Queues.init(device, queue_indexes.@"0", queue_indexes.@"1");
 
@@ -630,18 +634,6 @@ pub const Renderer = struct {
 
         // draw background
         vk.cmdBindPipeline(cmd, .compute, self.pipeline.handle);
-
-        // const descriptor_sets_info = vk.BindDescriptorSetsInfo {
-        //     .sType = .bind_descriptor_sets_info,
-        //     .stageFlags = .{ 
-        //         .compute_bit = true
-        //     },
-        //     .layout = self.pipeline.layout,
-        //     .firstSet = 0,
-        //     .descriptorSetCount = 1,
-        //     .pDescriptorSets = &self.descriptor_set,
-        // };
-        // vk.cmdBindDescriptorSets2(cmd, &descriptor_sets_info);
 
         vk.cmdBindDescriptorSets(cmd, .compute, self.pipeline.layout, 0, 1, &self.descriptor_set, 0, null);
 

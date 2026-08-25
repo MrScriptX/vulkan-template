@@ -237,7 +237,8 @@ pub fn parse(gpa: std.mem.Allocator, xml: []const u8) !model.Registry {
 
     try parseTypes(arena, xml, &reg, &handles, &aggregates);
     try parseEnumsBlocks(arena, xml, &reg);
-    try parseExtensionsAndFeatures(arena, xml, &reg);
+    var gating = CommandGating{};
+    try parseExtensionsAndFeatures(arena, xml, &reg, &gating);
 
     var enums: std.ArrayList(model.EnumType) = .empty;
     for (reg.builders.items) |b| {
@@ -250,7 +251,7 @@ pub fn parse(gpa: std.mem.Allocator, xml: []const u8) !model.Registry {
     }
 
     var commands: std.ArrayList(model.Command) = .empty;
-    try parseCommands(arena, xml, &commands);
+    try parseCommands(arena, xml, &commands, &gating);
 
     registry.handles = try handles.toOwnedSlice(arena);
     registry.enums = try enums.toOwnedSlice(arena);
@@ -509,12 +510,54 @@ fn addEnumValueFromAttrs(
 // extension-contributed StructureType/Result values.
 // ---------------------------------------------------------------------------
 
-fn parseExtensionsAndFeatures(arena: std.mem.Allocator, xml: []const u8, reg: *Registry_) !void {
-    try parseFeatureBlocks(arena, xml, reg);
-    try parseExtensionBlocks(arena, xml, reg);
+/// Command-name -> "is it in the VK_VERSION_1_0 baseline" classification, plus
+/// (for gated commands only) a human-readable origin label used purely for
+/// the generated wrapper's log message -- never for correctness. A command is
+/// treated as gated (dynamically resolved at runtime, see emit.zig) unless
+/// it's required unconditionally by the VK_VERSION_1_0 <feature> block; being
+/// conservative here (gated when actually always-available) is safe, the
+/// opposite mistake is not.
+const CommandGating = struct {
+    baseline: std.StringHashMapUnmanaged(void) = .empty,
+    origin: std.StringHashMapUnmanaged([]const u8) = .empty,
+
+    fn markBaseline(self: *CommandGating, arena: std.mem.Allocator, name: []const u8) !void {
+        try self.baseline.put(arena, name, {});
+    }
+
+    /// First contributor wins (feature blocks are scanned before extension
+    /// blocks, so a later core-promoted command's origin reads as the core
+    /// version, e.g. "Vulkan 1.4", not the extension it started as).
+    fn markGated(self: *CommandGating, arena: std.mem.Allocator, name: []const u8, label: []const u8) !void {
+        if (self.baseline.contains(name)) return;
+        if (self.origin.contains(name)) return;
+        try self.origin.put(arena, name, label);
+    }
+};
+
+/// Sibling of `scanEnumContributions`: walks the same `<feature>`/`<extension>`
+/// body for `<command name="X">` entries instead of `<enum extends="...">`
+/// entries.
+fn scanCommandContributions(arena: std.mem.Allocator, gating: *CommandGating, body: []const u8, is_baseline_block: bool, label: []const u8) !void {
+    var pos: usize = 0;
+    while (std.mem.indexOfPos(u8, body, pos, "<command ")) |tag_start| {
+        const header = scanTagHeader(body, tag_start + "<command".len) orelse break;
+        pos = header.tag_end + 1;
+        const name = attrValue(header.attrs, "name") orelse continue;
+        if (is_baseline_block) {
+            try gating.markBaseline(arena, name);
+        } else {
+            try gating.markGated(arena, name, label);
+        }
+    }
 }
 
-fn parseFeatureBlocks(arena: std.mem.Allocator, xml: []const u8, reg: *Registry_) !void {
+fn parseExtensionsAndFeatures(arena: std.mem.Allocator, xml: []const u8, reg: *Registry_, gating: *CommandGating) !void {
+    try parseFeatureBlocks(arena, xml, reg, gating);
+    try parseExtensionBlocks(arena, xml, reg, gating);
+}
+
+fn parseFeatureBlocks(arena: std.mem.Allocator, xml: []const u8, reg: *Registry_, gating: *CommandGating) !void {
     var pos: usize = 0;
     while (std.mem.indexOfPos(u8, xml, pos, "<feature ")) |tag_start| {
         const header = scanTagHeader(xml, tag_start + "<feature".len) orelse break;
@@ -528,10 +571,18 @@ fn parseFeatureBlocks(arena: std.mem.Allocator, xml: []const u8, reg: *Registry_
         if (!apiIncludesVulkan(attrValue(header.attrs, "api"))) continue;
 
         try scanEnumContributions(arena, reg, body, null);
+
+        const feature_name = attrValue(header.attrs, "name") orelse "";
+        const is_baseline_block = std.mem.eql(u8, feature_name, "VK_VERSION_1_0");
+        const label = if (attrValue(header.attrs, "number")) |n|
+            try std.fmt.allocPrint(arena, "Vulkan {s}", .{n})
+        else
+            feature_name;
+        try scanCommandContributions(arena, gating, body, is_baseline_block, label);
     }
 }
 
-fn parseExtensionBlocks(arena: std.mem.Allocator, xml: []const u8, reg: *Registry_) !void {
+fn parseExtensionBlocks(arena: std.mem.Allocator, xml: []const u8, reg: *Registry_, gating: *CommandGating) !void {
     const start = std.mem.indexOf(u8, xml, "<extensions") orelse return;
     const extensions_block = extractBlock(xml[start..], "<extensions", "</extensions>");
 
@@ -555,6 +606,9 @@ fn parseExtensionBlocks(arena: std.mem.Allocator, xml: []const u8, reg: *Registr
             null;
 
         try scanEnumContributions(arena, reg, body, number);
+
+        const ext_name = attrValue(header.attrs, "name") orelse "an unspecified extension";
+        try scanCommandContributions(arena, gating, body, false, ext_name);
     }
 }
 
@@ -576,7 +630,19 @@ fn scanEnumContributions(arena: std.mem.Allocator, reg: *Registry_, body: []cons
 // `<commands>`
 // ---------------------------------------------------------------------------
 
-fn parseCommands(arena: std.mem.Allocator, xml: []const u8, commands: *std.ArrayList(model.Command)) !void {
+/// Global commands aren't dispatched through any handle's table; instance-
+/// level commands take VkInstance/VkPhysicalDevice first; device-level take
+/// VkDevice/VkQueue/VkCommandBuffer first. Mirrors the classification Vulkan
+/// itself uses to decide between vkGetInstanceProcAddr/vkGetDeviceProcAddr.
+fn classifyLevel(params: []const model.Member) model.CommandLevel {
+    if (params.len == 0) return .global;
+    const base = params[0].type.base;
+    if (std.mem.eql(u8, base, "VkInstance") or std.mem.eql(u8, base, "VkPhysicalDevice")) return .instance;
+    if (std.mem.eql(u8, base, "VkDevice") or std.mem.eql(u8, base, "VkQueue") or std.mem.eql(u8, base, "VkCommandBuffer")) return .device;
+    return .global;
+}
+
+fn parseCommands(arena: std.mem.Allocator, xml: []const u8, commands: *std.ArrayList(model.Command), gating: *const CommandGating) !void {
     const commands_block = extractBlock(xml, "<commands", "</commands>");
 
     var pos: usize = 0;
@@ -621,10 +687,15 @@ fn parseCommands(arena: std.mem.Allocator, xml: []const u8, commands: *std.Array
             try params.append(arena, param);
         }
 
+        const param_slice = try params.toOwnedSlice(arena);
+        const is_baseline = gating.baseline.contains(c_name);
         try commands.append(arena, .{
             .c_name = c_name,
             .return_type = return_type,
-            .params = try params.toOwnedSlice(arena),
+            .params = param_slice,
+            .is_baseline = is_baseline,
+            .level = classifyLevel(param_slice),
+            .origin = if (is_baseline) "" else (gating.origin.get(c_name) orelse "an unspecified Vulkan version/extension"),
         });
     }
 }
@@ -644,6 +715,28 @@ pub fn zigCommandName(buf: []u8, c_name: []const u8) []const u8 {
 pub fn zigTypeName(c_name: []const u8) []const u8 {
     if (std.mem.startsWith(u8, c_name, "Vk")) return c_name[2..];
     return c_name;
+}
+
+test "scanCommandContributions marks VK_VERSION_1_0 commands baseline, extension commands gated" {
+    var gating = CommandGating{};
+    defer {
+        gating.baseline.deinit(std.testing.allocator);
+        gating.origin.deinit(std.testing.allocator);
+    }
+    try scanCommandContributions(std.testing.allocator, &gating, "<require><command name=\"vkCreateInstance\"/></require>", true, "Vulkan 1.0");
+    try scanCommandContributions(std.testing.allocator, &gating, "<require><command name=\"vkCmdBindDescriptorSets2\"/></require>", false, "VK_KHR_maintenance6");
+
+    try std.testing.expect(gating.baseline.contains("vkCreateInstance"));
+    try std.testing.expect(!gating.baseline.contains("vkCmdBindDescriptorSets2"));
+    try std.testing.expectEqualStrings("VK_KHR_maintenance6", gating.origin.get("vkCmdBindDescriptorSets2").?);
+}
+
+test "classifyLevel derives command level from first parameter's handle type" {
+    const instance_param = [_]model.Member{.{ .name = "instance", .type = .{ .base = "VkInstance" } }};
+    const device_param = [_]model.Member{.{ .name = "device", .type = .{ .base = "VkDevice" } }};
+    try std.testing.expectEqual(model.CommandLevel.instance, classifyLevel(&instance_param));
+    try std.testing.expectEqual(model.CommandLevel.device, classifyLevel(&device_param));
+    try std.testing.expectEqual(model.CommandLevel.global, classifyLevel(&.{}));
 }
 
 test "zigCommandName strips leading vk and lowercases only the first letter" {
