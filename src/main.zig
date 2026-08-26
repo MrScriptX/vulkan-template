@@ -27,7 +27,7 @@ pub fn main(proc: std.process.Init) !void {
     };
     defer renderer.deinit(allocator);
 
-    var app = Engine.init(&renderer);
+    var app = Engine.init(allocator, &renderer);
 
     var quit = false;
     while (!quit) {
@@ -66,10 +66,10 @@ const Engine = struct {
     renderer: *const engine.Renderer,
     scene: scenes.GradiantScene,
 
-    pub fn init(renderer: *const engine.Renderer) Engine {
+    pub fn init(allocator: std.mem.Allocator, renderer: *const engine.Renderer) Engine {
         return .{
             .renderer = renderer,
-            .scene = scenes.GradiantScene.init()
+            .scene = scenes.GradiantScene.init(allocator)
         };
     }
 
