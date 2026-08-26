@@ -83,7 +83,8 @@ pub const ImageResource = struct {
 
 pub const Context = struct {
     pipeline: *const shaders.Pipeline,
-    descriptor_sets: []vk.DescriptorSet
+    descriptor_sets: []vk.DescriptorSet,
+    dispatch_size: [3]u32,
 };
 
 pub const FnRender = *const fn(cmd: vk.CommandBuffer, ctx: *const Context) void;

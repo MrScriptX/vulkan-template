@@ -80,7 +80,12 @@ const Engine = struct {
         // TEST
         const ctx = render.Context {
             .pipeline = &self.renderer.pipeline,
-            .descriptor_sets = try allocator.alloc(vk.DescriptorSet, 1)
+            .descriptor_sets = try allocator.alloc(vk.DescriptorSet, 1),
+            .dispatch_size = .{
+                self.renderer.render_image.extent.width / 16,
+                self.renderer.render_image.extent.height / 16,
+                1
+            }
         };
         defer allocator.free(ctx.descriptor_sets);
 

@@ -38,12 +38,8 @@ pub const GradiantScene = struct {
 
 fn render_gradiant(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
     vk.cmdBindPipeline(cmd, .compute, ctx.pipeline.handle);
-
     vk.cmdBindDescriptorSets(cmd, .compute, ctx.pipeline.layout, 0, @intCast(ctx.descriptor_sets.len), ctx.descriptor_sets.ptr, 0, null);
-
-    // const group_x = ctx.render_image.extent.width / 16;
-    // const group_y = ctx.render_image.extent.height / 16;
-    vk.cmdDispatch(cmd, 16, 16, 1);
+    vk.cmdDispatch(cmd, ctx.dispatch_size[0], ctx.dispatch_size[1], ctx.dispatch_size[2]);
 }
 
 const std = @import("std");
