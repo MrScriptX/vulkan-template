@@ -220,20 +220,41 @@ const Seen = struct {
     map: std.StringHashMapUnmanaged(void) = .empty,
 
     fn reserve(self: *Seen, gpa: std.mem.Allocator, name: []const u8) !void {
-        try self.map.put(gpa, name, {});
+        const owned_name = try gpa.dupe(u8, name);
+        errdefer gpa.free(owned_name);
+
+        try self.map.put(gpa, owned_name, {});
     }
 
     fn tryReserve(self: *Seen, gpa: std.mem.Allocator, name: []const u8) !bool {
-        if (self.map.contains(name)) return false;
-        try self.map.put(gpa, name, {});
+        if (self.map.contains(name))
+            return false;
+        
+        const owned_name = try gpa.dupe(u8, name);
+        errdefer gpa.free(owned_name);
+
+        try self.map.put(gpa, owned_name, {});
         return true;
+    }
+
+    fn deinit(self: *Seen, gpa: std.mem.Allocator) void {
+        var it = self.map.iterator();
+
+        while (it.next()) |entry| {
+            gpa.free(entry.key_ptr.*);
+        }
+
+        self.map.deinit(gpa);
     }
 };
 
 pub fn write(gpa: std.mem.Allocator, reg: *const model.Registry, out: *std.ArrayList(u8)) !void {
     const dropped = try computeDroppedAggregates(gpa, reg);
     const universe = try Universe.build(gpa, reg, &dropped);
+   
     var seen = Seen{};
+    defer seen.deinit(gpa);
+
     try seen.reserve(gpa, "Error");
     try seen.reserve(gpa, "check_result");
 
@@ -550,6 +571,7 @@ fn writeCommands(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const mo
             }
             try call_args.appendSlice(gpa, field);
         }
+
         if (!ok) {
             std.log.warn("vk_generator: skipping command '{s}' (unrepresentable parameter type)", .{cmd.c_name});
             continue;
@@ -557,6 +579,7 @@ fn writeCommands(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const mo
 
         var ret: std.ArrayList(u8) = .empty;
         defer ret.deinit(gpa);
+
         if (!try writeReturnType(&ret, gpa, reg, universe, cmd.return_type)) {
             std.log.warn("vk_generator: skipping command '{s}' (unrepresentable return type)", .{cmd.c_name});
             continue;
@@ -590,7 +613,8 @@ fn writeCommands(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const mo
             //     against the statically-linked Vulkan loader. Safe: every
             //     VK_VERSION_1_0-required command is guaranteed present.
             try out.print(gpa, "pub extern fn {s}({s}) callconv(.c) {s};\n", .{ cmd.c_name, sig.items, ret.items });
-        } else {
+        }
+        else {
             // 1b. gated command: not guaranteed present. Reroute to a stub
             //     of the identical signature until (if ever) resolved to the
             //     real driver function by loadInstanceCommands/
@@ -623,14 +647,19 @@ fn writeCommands(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const mo
         //    holding a function pointer; both call with the same syntax.
         var name_buf: [256]u8 = undefined;
         const zig_name = registry.zigCommandName(&name_buf, cmd.c_name);
-        if (!try seen.tryReserve(gpa, zig_name)) {
+
+        if (!try seen.tryReserve(gpa, zig_name))
+        {
             std.log.warn("vk_generator: skipping duplicate command wrapper '{s}' ({s})", .{ zig_name, cmd.c_name });
             continue;
         }
 
-        if (is_result) {
+        if (is_result)
+        {
             try out.print(gpa, "pub fn {s}({s}) Error!void {{\n    try check_result({s}({s}));\n}}\n\n", .{ zig_name, sig.items, cmd.c_name, call_args.items });
-        } else {
+        }
+        else
+        {
             try out.print(gpa, "pub fn {s}({s}) {s} {{\n    return {s}({s});\n}}\n\n", .{ zig_name, sig.items, ret.items, cmd.c_name, call_args.items });
         }
     }

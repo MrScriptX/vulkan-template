@@ -712,6 +712,18 @@ pub fn zigCommandName(buf: []u8, c_name: []const u8) []const u8 {
     return buf[0..rest.len];
 }
 
+pub fn zigCommandNameAlloc(allocator: std.mem.Allocator, c_name: []const u8) ![]const u8 {
+    std.debug.assert(std.mem.startsWith(u8, c_name, "vk"));
+
+    const rest = c_name[2..];
+    
+    const buffer = try allocator.alloc(u8, rest.len);
+    @memcpy(buffer, rest);
+
+    buffer[0] = std.ascii.toLower(buffer[0]);
+    return buffer;
+}
+
 pub fn zigTypeName(c_name: []const u8) []const u8 {
     if (std.mem.startsWith(u8, c_name, "Vk")) return c_name[2..];
     return c_name;

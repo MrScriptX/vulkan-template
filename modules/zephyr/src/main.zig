@@ -2,7 +2,9 @@ const std = @import("std");
 const zephyr = @import("zephyr");
 
 pub fn main(init: std.process.Init) !void {
-    const gpa = init.arena.allocator();
+    // const gpa = init.arena.allocator();
+    var dba = std.heap.DebugAllocator(.{}).init;
+    const gpa = dba.allocator();
     const args = try init.minimal.args.toSlice(gpa);
     if (args.len != 3) std.process.fatal("usage: vk_generator <vk.xml path> <output vk.zig path>", .{});
 
