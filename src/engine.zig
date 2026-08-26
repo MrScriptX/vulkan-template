@@ -353,7 +353,7 @@ pub const Renderer = struct {
     descriptor_set: vk.DescriptorSet,
     descriptor_set_layout: vk.DescriptorSetLayout, 
 
-    pipeline: shaders.ComputePipeline,
+    pipeline: shaders.Pipeline,
 
     pub fn init(io: std.Io, allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
@@ -470,7 +470,7 @@ pub const Renderer = struct {
             .setLayoutCount = 1,
             .pSetLayouts = &descriptor_set_layout
         };
-        const pipeline = try shaders.ComputePipeline.init(device, pipeline_layout_info, shader_module);
+        const pipeline = try shaders.Pipeline.init(device, pipeline_layout_info, shader_module);
 
         return .{
             .instance = instance,
@@ -547,18 +547,18 @@ pub const Renderer = struct {
             return Error.SkipImage;
         };
 
-        scene.draw(cmd);
-
         transition_image_layout(cmd, self.render_image.image, .@"undefined", .general);
 
+        scene.draw(cmd);
+
         // draw background
-        vk.cmdBindPipeline(cmd, .compute, self.pipeline.handle);
+        // vk.cmdBindPipeline(cmd, .compute, self.pipeline.handle);
 
-        vk.cmdBindDescriptorSets(cmd, .compute, self.pipeline.layout, 0, 1, &self.descriptor_set, 0, null);
+        // vk.cmdBindDescriptorSets(cmd, .compute, self.pipeline.layout, 0, 1, &self.descriptor_set, 0, null);
 
-        const group_x = self.render_image.extent.width / 16;
-        const group_y = self.render_image.extent.height / 16;
-        vk.cmdDispatch(cmd, group_x, group_y, 1);
+        // const group_x = self.render_image.extent.width / 16;
+        // const group_y = self.render_image.extent.height / 16;
+        // vk.cmdDispatch(cmd, group_x, group_y, 1);
 
         transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
         transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);

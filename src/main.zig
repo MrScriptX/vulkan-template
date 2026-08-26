@@ -28,6 +28,7 @@ pub fn main(proc: std.process.Init) !void {
     defer renderer.deinit(allocator);
 
     var app = Engine.init(allocator, &renderer);
+    defer app.deinit();
 
     var quit = false;
     while (!quit) {
@@ -38,7 +39,7 @@ pub fn main(proc: std.process.Init) !void {
             }
         }
 
-        app.draw() catch |err| {
+        app.draw(allocator) catch |err| {
             switch (err) {
                 engine.Error.SkipImage => {
                     std.log.warn("Skipping image...", .{});
@@ -73,8 +74,21 @@ const Engine = struct {
         };
     }
 
-    pub fn draw(self: *Engine) !void {
+    pub fn draw(self: *Engine, allocator: std.mem.Allocator) !void {
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
+
+        // TEST
+        const ctx = render.Context {
+            .pipeline = &self.renderer.pipeline,
+            .descriptor_sets = try allocator.alloc(vk.DescriptorSet, 1)
+        };
+        defer allocator.free(ctx.descriptor_sets);
+
+        ctx.descriptor_sets[0] = self.renderer.descriptor_set;
+        // END TEST
+
+        self.scene.update(allocator, ctx);
+
         try self.renderer.draw(frame_index, &self.scene);
         self.frame_count += 1;
     }
@@ -86,5 +100,7 @@ const Engine = struct {
 
 const std = @import("std");
 const c = @import("c");
+const vk = @import("vk");
 const engine = @import("engine.zig");
 const scenes = @import("scenes/gradiant.zig");
+const render = @import("render.zig");

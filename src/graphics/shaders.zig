@@ -1,12 +1,12 @@
 const std = @import("std");
 const vk = @import("vk");
 
-pub const ComputePipeline = struct {
+pub const Pipeline = struct {
     device: vk.Device,
     handle: vk.Pipeline,
     layout: vk.PipelineLayout,
 
-    pub fn init(device: vk.Device, layout_info: vk.PipelineLayoutCreateInfo, module: vk.ShaderModule) !ComputePipeline {        
+    pub fn init(device: vk.Device, layout_info: vk.PipelineLayoutCreateInfo, module: vk.ShaderModule) !Pipeline {        
         var layout: vk.PipelineLayout = undefined;
         vk.createPipelineLayout(device, &layout_info, null, &layout) catch |err| {
             std.log.err("failed to create pipeline layout. error : {any}", .{ err });
@@ -40,7 +40,7 @@ pub const ComputePipeline = struct {
         };
     }
 
-    pub fn deinit(self: *ComputePipeline) void {
+    pub fn deinit(self: *Pipeline) void {
         vk.destroyPipeline(self.device, self.handle, null);
         vk.destroyPipelineLayout(self.device, self.layout, null);
     }
