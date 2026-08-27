@@ -58,16 +58,23 @@ pub const Writer = struct {
 
     writes: std.ArrayList(vk.WriteDescriptorSet),
     images_info: std.ArrayList(*vk.DescriptorImageInfo),
+    buffers_info: std.ArrayList(*vk.DescriptorBufferInfo),
 
     pub fn init(allocator: std.mem.Allocator) Writer {
         return .{
             .allocator = allocator,
             .writes = std.ArrayList(vk.WriteDescriptorSet).empty,
-            .images_info = std.ArrayList(*vk.DescriptorImageInfo).empty
+            .images_info = std.ArrayList(*vk.DescriptorImageInfo).empty,
+            .buffers_info = std.ArrayList(*vk.DescriptorBufferInfo).empty
         };
     }
 
     pub fn deinit(self: *Writer) void {
+        for (self.buffers_info.items) |info| {
+            self.allocator.destroy(info);
+        }
+        self.buffers_info.deinit(self.allocator);
+
         for (self.images_info.items) |info| {
             self.allocator.destroy(info);
         }
@@ -109,6 +116,37 @@ pub const Writer = struct {
         };
 
         self.writes.append(self.allocator, image_write) catch |err| {
+            std.log.err("failed to append descriptor set write. error : {any}", .{ err });
+            return err;
+        };
+    }
+
+    pub fn addBuffer(self: *Writer, binding: u32, buffer: vk.Buffer, offset: u64, range: u64, kind: vk.DescriptorType) !void {
+        const buffer_descriptor_info = self.allocator.create(vk.DescriptorBufferInfo) catch |err| {
+            std.log.err("failed to allocate DescriptorBufferInfo. error : {any}", .{ err });
+            return err;
+        };
+
+        buffer_descriptor_info.* = vk.DescriptorBufferInfo {
+            .buffer = buffer,
+            .offset = offset,
+            .range = range
+        };
+
+        self.buffer_info.append(self.allocator, buffer_descriptor_info) catch |err| {
+            std.log.err("failed to append descriptor set write. erro : {any}", .{err});
+            return err;
+        };
+
+        const buffer_write = vk.WriteDescriptorSet {
+            .sType = .write_descriptor_set,
+            .pBufferInfo = buffer_descriptor_info,
+            .dstBinding = binding,
+            .descriptorCount = 1,
+            .descriptorType = kind,
+        };
+
+        self.writes.append(self.allocator, buffer_write) catch |err| {
             std.log.err("failed to append descriptor set write. error : {any}", .{ err });
             return err;
         };

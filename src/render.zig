@@ -124,6 +124,7 @@ pub const RenderPass = struct {
     allocator: std.mem.Allocator,
     
     images: std.ArrayList(ImageResource), // handle wanted state
+    buffers: std.ArrayList(BufferResource),
     ctx: Context,
 
     callback: FnRender,
@@ -133,16 +134,26 @@ pub const RenderPass = struct {
             .allocator = allocator,
             .callback = callback,
             .images = std.ArrayList(ImageResource).empty,
+            .buffers = std.ArrayList(BufferResource).empty,
             .ctx = ctx,
         };
     }
 
     pub fn clear(self: *RenderPass) void {
+        self.buffers.clearRetainingCapacity();
         self.images.clearRetainingCapacity();
     }
 
     pub fn deinit(self: *RenderPass) void {
+        self.buffers.deinit(self.allocator);
         self.images.deinit(self.allocator);
+    }
+
+    pub fn addBuffer(self: *RenderPass, buffer: BufferResource) !void {
+        self.buffers.append(self.allocator, buffer) catch |err| {
+            std.log.err("failed to allocate buffer. error : {any}", .{err});
+            return err;
+        };
     }
 
     pub fn addImageBuffer(self: *RenderPass, image: ImageResource) !void {
@@ -155,6 +166,10 @@ pub const RenderPass = struct {
     pub fn exec(self: *const RenderPass, cmd: vk.CommandBuffer) void {
         self.callback(cmd, &self.ctx);
     }
+};
+
+pub const BufferResource = struct {
+    buffer: *const types.Buffer, 
 };
 
 pub const ImageResource = struct {

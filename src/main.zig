@@ -74,7 +74,7 @@ const Engine = struct {
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, renderer: *const engine.Renderer) !Engine {
         const gradiant_scene = try scenes.GradiantScene.init(allocator, io, renderer.device);
-        const gravity_scene = try gravity.GravityScene.init(allocator, io, renderer.device);
+        const gravity_scene = try gravity.GravityScene.init(allocator, io, renderer.device, renderer.vma);
 
         return .{
             .renderer = renderer,
@@ -95,7 +95,7 @@ const Engine = struct {
     pub fn deinit(self: *Engine) void {
         self.renderer.stop();
 
-        self.gravity_scene.deinit();
+        self.gravity_scene.deinit(self.renderer.device);
         self.gradiant_scene.deinit(self.renderer.device);
     }
 };

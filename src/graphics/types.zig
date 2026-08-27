@@ -72,7 +72,7 @@ pub const Buffer = struct {
     allocation: c.VmaAllocation,
     info: c.VmaAllocationInfo,
 
-    pub fn init(vma: c.VmaAllocator, size: usize, usage: vk.BufferUsageFlags, mem_usage: c.VmaMemoryUsage) Buffer {
+    pub fn init(vma: c.VmaAllocator, size: usize, usage: vk.BufferUsageFlags, mem_usage: c.VmaMemoryUsage) !Buffer {
         const buffer_create_info = vk.BufferCreateInfo {
             .sType = .buffer_create_info,
             .size = size,
@@ -84,13 +84,15 @@ pub const Buffer = struct {
             .flags = c.VMA_ALLOCATION_CREATE_MAPPED_BIT
         };
 
-        const buffer: vk.Buffer = undefined;
+        var cbuffer: c.VkBuffer = undefined;
         var allocation: c.VmaAllocation = undefined;
         var allocation_info: c.VmaAllocationInfo = undefined;
-        vk_interop.vmaCreateBuffer(vma, @ptrCast(&buffer_create_info), &allocation_create_info, @ptrCast(buffer), &allocation, &allocation_info) catch |err| {
+        vk_interop.vmaCreateBuffer(vma, @ptrCast(&buffer_create_info), &allocation_create_info, &cbuffer, &allocation, &allocation_info) catch |err| {
             std.log.err("failed to allocate new buffer. error : {any}", .{err});
             return err;
         };
+
+        const buffer = vk_interop.bufferFromC(cbuffer);
 
         return .{
             .handle = buffer,
