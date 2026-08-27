@@ -6,14 +6,32 @@ pub const Pipeline = struct {
     handle: vk.Pipeline,
     layout: vk.PipelineLayout,
 
-    pub fn init(device: vk.Device, layout_info: vk.PipelineLayoutCreateInfo, module: vk.ShaderModule) !Pipeline {        
+    descriptor_set_layouts: []vk.DescriptorSetLayout,
+
+    pub fn init(device: vk.Device, descriptor_set_layouts: []vk.DescriptorSetLayout) !Pipeline {        
+        const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
+            .sType = .pipeline_layout_create_info,
+            .setLayoutCount = @intCast(descriptor_set_layouts.len),
+            .pSetLayouts = descriptor_set_layouts.ptr
+        };
+
         var layout: vk.PipelineLayout = undefined;
-        vk.createPipelineLayout(device, &layout_info, null, &layout) catch |err| {
+        vk.createPipelineLayout(device, &pipeline_layout_info, null, &layout) catch |err| {
             std.log.err("failed to create pipeline layout. error : {any}", .{ err });
             return err;
         };
         errdefer vk.destroyPipelineLayout(device, layout, null);
 
+        return .{
+            .device = device,
+            .layout = layout,
+            .handle = .null_handle,
+            .descriptor_set_layouts = descriptor_set_layouts
+        };
+    }
+
+    pub fn buildCompute(self: *Pipeline, device: vk.Device, module: vk.ShaderModule) !void {
+        // build shader
         const stage_info = vk.PipelineShaderStageCreateInfo {
             .sType = .pipeline_shader_stage_create_info,
             .module = module,
@@ -23,26 +41,29 @@ pub const Pipeline = struct {
 
         const create_pipeline_info = vk.ComputePipelineCreateInfo {
             .sType = .compute_pipeline_create_info,
-            .layout = layout,
+            .layout = self.layout,
             .stage = stage_info,
         };
 
-        var pipeline: vk.Pipeline = undefined;
-        vk.createComputePipelines(device, .null_handle, 1, &create_pipeline_info, null, &pipeline) catch |err| {
+        if (self.handle != .null_handle) {
+            std.log.warn("pipeline already exist.", .{});
+            return;
+        }
+
+        vk.createComputePipelines(device, .null_handle, 1, &create_pipeline_info, null, &self.handle) catch |err| {
             std.log.err("failed to create pipeline. error : {any}", .{err});
             return err;
-        }; 
-
-        return .{
-            .device = device,
-            .layout = layout,
-            .handle = pipeline
         };
     }
 
-    pub fn deinit(self: *Pipeline) void {
+    pub fn deinit(self: *Pipeline, allocator: std.mem.Allocator) void {
         vk.destroyPipeline(self.device, self.handle, null);
         vk.destroyPipelineLayout(self.device, self.layout, null);
+
+        for (self.descriptor_set_layouts) |layout| {
+            vk.destroyDescriptorSetLayout(self.device, layout, null);
+        }
+        allocator.free(self.descriptor_set_layouts);
     }
 };
 
@@ -71,3 +92,5 @@ pub fn load_shader_module(io: std.Io, allocator: std.mem.Allocator, path: []cons
 pub const Error = error {
     LoadFailed
 };
+
+const descriptors = @import("descriptors.zig");

@@ -5,7 +5,6 @@ pub const GradiantScene = struct {
     render_graph: render.RenderGraph,
 
     descriptor_allocator: allocators.Descriptor,
-    descriptor_set_layout: vk.DescriptorSetLayout,
     descriptor_sets: []vk.DescriptorSet,
 
     pipeline: shaders.Pipeline,
@@ -29,10 +28,18 @@ pub const GradiantScene = struct {
             .compute_bit = true
         };
         try layout_builder.addBinding(0, .storage_image, shader_stages);
+
         const descriptor_set_layout = try layout_builder.build(device, .{});
         errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layout, null);
 
+        const descriptor_set_layouts = try allocator.alloc(vk.DescriptorSetLayout, 1);
+        errdefer allocator.free(descriptor_set_layouts);
+
+        descriptor_set_layouts[0] = descriptor_set_layout;
+
         // create pipeline
+        var pipeline = try shaders.Pipeline.init(device, descriptor_set_layouts);
+
         const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
         defer allocator.free(exe_dir);
 
@@ -41,13 +48,8 @@ pub const GradiantScene = struct {
 
         const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
         defer vk.destroyShaderModule(device, shader_module, null);
-
-        const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
-            .sType = .pipeline_layout_create_info,
-            .setLayoutCount = 1,
-            .pSetLayouts = &descriptor_set_layout
-        };
-        const pipeline = try shaders.Pipeline.init(device, pipeline_layout_info, shader_module);
+        
+        try pipeline.buildCompute(device, shader_module);
 
         // allocate descriptor set
         const descriptor_set = try da.allocate(descriptor_set_layout);
@@ -66,7 +68,6 @@ pub const GradiantScene = struct {
 
             .pipeline = pipeline,
             .descriptor_allocator = da,
-            .descriptor_set_layout = descriptor_set_layout,
             .descriptor_sets = descriptor_sets
         };
     }
@@ -145,9 +146,8 @@ pub const GradiantScene = struct {
     pub fn deinit(self: *GradiantScene, device: vk.Device) void {
         self.allocator.free(self.descriptor_sets);
 
-        self.pipeline.deinit();
+        self.pipeline.deinit(self.allocator);
 
-        vk.destroyDescriptorSetLayout(device, self.descriptor_set_layout, null);
         self.descriptor_allocator.deinit(device);
         
         self.render_graph.deinit();
