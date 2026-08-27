@@ -92,7 +92,7 @@ const Engine = struct {
         ctx.descriptor_sets[0] = self.renderer.descriptor_set;
         // END TEST
 
-        self.scene.update(allocator, ctx);
+        self.scene.update(allocator, ctx, &self.renderer.render_image);
 
         try self.renderer.draw(frame_index, &self.scene);
         self.frame_count += 1;

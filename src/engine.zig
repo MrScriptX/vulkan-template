@@ -547,7 +547,7 @@ pub const Renderer = struct {
             return Error.SkipImage;
         };
 
-        transition_image_layout(cmd, self.render_image.image, .@"undefined", .general);
+        // utils.transition_image_layout(cmd, self.render_image.image, .@"undefined", .general);
 
         scene.draw(cmd);
 
@@ -560,16 +560,16 @@ pub const Renderer = struct {
         // const group_y = self.render_image.extent.height / 16;
         // vk.cmdDispatch(cmd, group_x, group_y, 1);
 
-        transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
-        transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);
+        utils.transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
+        utils.transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);
 
         // draw scene
 
-        transition_image_layout(cmd, self.render_image.image, .color_attachment_optimal, .transfer_src_optimal);
+        utils.transition_image_layout(cmd, self.render_image.image, .color_attachment_optimal, .transfer_src_optimal);
 
 
         // copy draw image to swapchain image
-        transition_image_layout(cmd, self.swapchain.images[image_index], .@"undefined", .transfer_dst_optimal);
+        utils.transition_image_layout(cmd, self.swapchain.images[image_index], .@"undefined", .transfer_dst_optimal);
 
         const render_image_extent = vk.Extent2D {
             .width = self.render_image.extent.width,
@@ -577,11 +577,11 @@ pub const Renderer = struct {
         };
         blit_image(cmd, self.render_image.image, self.swapchain.images[image_index], render_image_extent, self.swapchain.extent);
 
-        transition_image_layout(cmd, self.swapchain.images[image_index], .transfer_dst_optimal, .color_attachment_optimal);
+        utils.transition_image_layout(cmd, self.swapchain.images[image_index], .transfer_dst_optimal, .color_attachment_optimal);
 
         // draw engine GUI
 
-        transition_image_layout(cmd, self.swapchain.images[image_index], .color_attachment_optimal, .present_src_khr);
+        utils.transition_image_layout(cmd, self.swapchain.images[image_index], .color_attachment_optimal, .present_src_khr);
 
         // end recording
         // submit command buffer
@@ -1115,40 +1115,6 @@ fn current_window_extent(window: *c.SDL_Window) !vk.Extent2D {
     return extent;
 }
 
-fn transition_image_layout(cmd: vk.CommandBuffer, image: vk.Image, current_layout: vk.ImageLayout, new_layout: vk.ImageLayout) void {
-    const aspect_mask: vk.ImageAspectFlags = if (new_layout == .depth_attachment_optimal) .{ .depth_bit = true } else .{ .color_bit = true };
-
-	const image_barrier = vk.ImageMemoryBarrier2 {
-		.sType = .image_memory_barrier_2,
-
-		.srcStageMask = .{ .all_commands_bit = true },
-		.srcAccessMask = .{ .memory_write_bit = true },
-		.dstStageMask = .{ .all_commands_bit = true },
-		.dstAccessMask = .{ .memory_write_bit = true, .memory_read_bit = true },
-
-		.oldLayout = current_layout,
-		.newLayout = new_layout,
-
-		.image = image,
-		.subresourceRange = vk.ImageSubresourceRange {
-		    .aspectMask = aspect_mask,
-		    .baseMipLevel = 0,
-		    .levelCount = c.VK_REMAINING_MIP_LEVELS,
-		    .baseArrayLayer = 0,
-		    .layerCount = c.VK_REMAINING_ARRAY_LAYERS,
-	    },
-	};
-
-	const dep_info = vk.DependencyInfo {
-		.sType = .dependency_info,
-
-		.imageMemoryBarrierCount = 1,
-		.pImageMemoryBarriers = &image_barrier,
-	};
-
-    vk.cmdPipelineBarrier2(cmd, &dep_info);
-}
-
 fn blit_image(cmd: vk.CommandBuffer, source: vk.Image, destination: vk.Image, srcSize: vk.Extent2D, dstSize: vk.Extent2D) void {
     const empty_offset = vk.Offset3D {
         .x = 0,
@@ -1225,3 +1191,4 @@ const descriptors = @import("graphics/descriptors.zig");
 const shaders = @import("graphics/shaders.zig");
 const types = @import("graphics/types.zig");
 const gradiant = @import("scenes/gradiant.zig");
+const utils = @import("graphics/utils.zig");

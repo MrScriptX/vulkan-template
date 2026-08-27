@@ -9,17 +9,18 @@ pub const GradiantScene = struct {
         };
     }
 
-    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, ctx: render.Context) void {
+    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, ctx: render.Context, image: *const types.Image) void {
         self.render_graph.clear();
 
-        const render_pass = render.RenderPass.init(allocator, &render_gradiant, ctx);
-        // defer render_pass.deinit();
+        var render_pass = render.RenderPass.init(allocator, &render_gradiant, ctx);
 
-        // const input_image = render.ImageResource {
-        //     .image = image,
-        //     .current_layout = .undefined
-        // };
-        // try render_pass.addImageBuffer(input_image);
+        const render_image = render.ImageResource {
+            .image = image,
+            .layout = .general
+        };
+        render_pass.addImageBuffer(render_image) catch {
+            std.log.err("failed to add render image resource.", .{});
+        };
 
         self.render_graph.addPass(render_pass) catch |err| {
             std.log.err("failed to register render pass. error : {any}", .{err});
