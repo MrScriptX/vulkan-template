@@ -86,11 +86,15 @@ pub const Descriptor = struct {
                 return try self.allocate(layout); // try with a new pool
             }
             else {
+                try self.ready_pools.append(self.allocator, pool);
+
                 std.log.err("failed to allocate descriptor set. error : {any}", .{err});
                 return err;
             }
         };
 
+        try self.ready_pools.append(self.allocator, pool);
+        
         return descriptor_set;
     }
 };
