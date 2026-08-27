@@ -110,7 +110,7 @@ pub const GradiantScene = struct {
         };
 
         var draw_gradiant_pass = render.RenderPass.init(allocator, &render_gradiant, ctx);
-        draw_gradiant_pass.addImageBuffer(render_resource) catch {
+        draw_gradiant_pass.addImage(render_resource) catch {
             std.log.err("failed to add render image resource.", .{});
         };
 
@@ -122,11 +122,11 @@ pub const GradiantScene = struct {
         var empty_color_pass = render.RenderPass.init(allocator, &render_color, ctx);
 
         render_resource.layout = .color_attachment_optimal;
-        empty_color_pass.addImageBuffer(render_resource) catch {
+        empty_color_pass.addImage(render_resource) catch {
             std.log.err("failed to add render image resource.", .{});
         };
 
-        empty_color_pass.addImageBuffer(depth_resource) catch {
+        empty_color_pass.addImage(depth_resource) catch {
             std.log.err("failed to add depth image resource.", .{});
         };
 

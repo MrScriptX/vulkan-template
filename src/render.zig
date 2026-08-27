@@ -156,7 +156,7 @@ pub const RenderPass = struct {
         };
     }
 
-    pub fn addImageBuffer(self: *RenderPass, image: ImageResource) !void {
+    pub fn addImage(self: *RenderPass, image: ImageResource) !void {
         self.images.append(self.allocator, image) catch |err| {
             std.log.err("failed to allocate image buffer. error : {any}", .{err});
             return err;
