@@ -6,7 +6,7 @@ It is a starting point.
 
 ## Dependencies
 
-- Zig (0.15.1)
+- Zig (0.16.0)
 - Vulkan SDK
 - SDL3
 - Vulkan Memory Allocator (VMA)
