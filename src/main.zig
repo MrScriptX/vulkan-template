@@ -68,30 +68,35 @@ pub fn main(proc: std.process.Init) !void {
 const Engine = struct {
     frame_count: u32 = 0,
     renderer: *const engine.Renderer,
-    scene: scenes.GradiantScene,
+    
+    gradiant_scene: scenes.GradiantScene,
+    gravity_scene: gravity.GravityScene,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, renderer: *const engine.Renderer) !Engine {
-        const scene = try scenes.GradiantScene.init(allocator, io, renderer.device);
-        
+        const gradiant_scene = try scenes.GradiantScene.init(allocator, io, renderer.device);
+        const gravity_scene = try gravity.GravityScene.init(allocator, io, renderer.device);
+
         return .{
             .renderer = renderer,
-            .scene = scene
+            .gradiant_scene = gradiant_scene,
+            .gravity_scene = gravity_scene
         };
     }
 
     pub fn draw(self: *Engine, allocator: std.mem.Allocator) !void {
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
 
-        try self.scene.update(allocator, self.renderer.device, &self.renderer.draw_resource);
+        try self.gradiant_scene.update(allocator, self.renderer.device, &self.renderer.draw_resource);
 
-        try self.renderer.draw(frame_index, &self.scene);
+        try self.renderer.draw(frame_index, &self.gradiant_scene);
         self.frame_count += 1;
     }
 
     pub fn deinit(self: *Engine) void {
         self.renderer.stop();
 
-        self.scene.deinit(self.renderer.device);
+        self.gravity_scene.deinit();
+        self.gradiant_scene.deinit(self.renderer.device);
     }
 };
 
@@ -100,4 +105,5 @@ const c = @import("c");
 const vk = @import("vk");
 const engine = @import("engine.zig");
 const scenes = @import("scenes/gradiant.zig");
+const gravity = @import("scenes/gravity.zig");
 const render = @import("render.zig");

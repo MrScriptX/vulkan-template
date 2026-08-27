@@ -30,8 +30,8 @@ pub const Pipeline = struct {
         };
     }
 
+    /// Build a compute shader
     pub fn buildCompute(self: *Pipeline, device: vk.Device, module: vk.ShaderModule) !void {
-        // build shader
         const stage_info = vk.PipelineShaderStageCreateInfo {
             .sType = .pipeline_shader_stage_create_info,
             .module = module,
