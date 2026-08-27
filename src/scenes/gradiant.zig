@@ -1,6 +1,7 @@
 pub const GradiantScene = struct {
     allocator: std.mem.Allocator,
 
+    state: State,
     render_graph: render.RenderGraph,
 
     descriptor_allocator: allocators.Descriptor,
@@ -9,7 +10,7 @@ pub const GradiantScene = struct {
 
     pipeline: shaders.Pipeline,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device, render_image: types.Image) !GradiantScene {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !GradiantScene {
         // create descriptor allocator
         const pool_sizes = [_]descriptors.PoolSizeRatio {
             .{ .kind = vk.DescriptorType.storage_image, .ratio = 1 }
@@ -51,12 +52,6 @@ pub const GradiantScene = struct {
         // allocate descriptor set
         const descriptor_set = try da.allocate(descriptor_set_layout);
 
-        var descriptor_writer = descriptors.Writer.init(allocator);
-        defer descriptor_writer.deinit();
-
-        try descriptor_writer.addImage(0, render_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
-        descriptor_writer.write(device, descriptor_set);
-
         const descriptor_sets = allocator.alloc(vk.DescriptorSet, 1) catch {
             std.log.err("failed to allocate descriptor sets.", .{});
             return Error.initialization_failed;
@@ -66,6 +61,7 @@ pub const GradiantScene = struct {
         return .{
             .allocator = allocator,
 
+            .state = .{},
             .render_graph = render.RenderGraph.init(allocator),
 
             .pipeline = pipeline,
@@ -75,31 +71,66 @@ pub const GradiantScene = struct {
         };
     }
 
-    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, image: *const types.Image) !void {
+    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, device: vk.Device, color_image: *const types.Image, depth_image: *const types.Image) !void {
         self.render_graph.clear();
 
+        // check if needs update
+        if (color_image.extent.width != self.state.x_view or  color_image.extent.height != self.state.y_view) {
+            self.state.x_view = color_image.extent.width;
+            self.state.y_view = color_image.extent.height;
+
+            var descriptor_writer = descriptors.Writer.init(allocator);
+            defer descriptor_writer.deinit();
+
+            try descriptor_writer.addImage(0, color_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
+            descriptor_writer.write(device, self.descriptor_sets[0]);
+        }
+
+        // prepare render graph
+        var render_resource = render.ImageResource {
+            .image = color_image,
+            .layout = .general
+        };
+
+        const depth_resource = render.ImageResource {
+            .image = depth_image,
+            .layout = .depth_attachment_optimal
+        };
+
+        // create draw grandiant pass
         const ctx = render.Context {
             .pipeline = &self.pipeline,
             .descriptor_sets = self.descriptor_sets,
             .dispatch_size = .{
-                image.extent.width / 16,
-                image.extent.height / 16,
+                color_image.extent.width / 16,
+                color_image.extent.height / 16,
                 1
             }
         };
 
-        var render_pass = render.RenderPass.init(allocator, &render_gradiant, ctx);
-
-        const render_image = render.ImageResource {
-            .image = image,
-            .layout = .general
-        };
-        render_pass.addImageBuffer(render_image) catch {
+        var draw_gradiant_pass = render.RenderPass.init(allocator, &render_gradiant, ctx);
+        draw_gradiant_pass.addImageBuffer(render_resource) catch {
             std.log.err("failed to add render image resource.", .{});
         };
 
-        self.render_graph.addPass(render_pass) catch |err| {
+        self.render_graph.addPass(draw_gradiant_pass) catch |err| {
             std.log.err("failed to register render pass. error : {any}", .{err});
+        };
+
+        // create empty draw color pass
+        var empty_color_pass = render.RenderPass.init(allocator, &render_color, ctx);
+
+        render_resource.layout = .color_attachment_optimal;
+        empty_color_pass.addImageBuffer(render_resource) catch {
+            std.log.err("failed to add render image resource.", .{});
+        };
+
+        empty_color_pass.addImageBuffer(depth_resource) catch {
+            std.log.err("failed to add depth image resource.", .{});
+        };
+
+        self.render_graph.addPass(empty_color_pass) catch |err| {
+            std.log.err("failed to register empty pass. error : {any}", .{err});
         };
     }
 
@@ -118,6 +149,12 @@ pub const GradiantScene = struct {
         self.render_graph.deinit();
     }
 
+    /// scene state
+    const State = struct {
+        x_view: u32 = 0,
+        y_view: u32 = 0
+    };
+
     const Error = error {
         initialization_failed
     };
@@ -127,6 +164,10 @@ fn render_gradiant(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
     vk.cmdBindPipeline(cmd, .compute, ctx.pipeline.handle);
     vk.cmdBindDescriptorSets(cmd, .compute, ctx.pipeline.layout, 0, @intCast(ctx.descriptor_sets.len), ctx.descriptor_sets.ptr, 0, null);
     vk.cmdDispatch(cmd, ctx.dispatch_size[0], ctx.dispatch_size[1], ctx.dispatch_size[2]);
+}
+
+fn render_color(_: vk.CommandBuffer, _: *const render.Context) void {
+
 }
 
 const std = @import("std");

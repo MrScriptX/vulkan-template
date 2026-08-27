@@ -491,13 +491,12 @@ pub const Renderer = struct {
 
         scene.draw(cmd);
 
-        utils.transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
-        utils.transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);
+        // utils.transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
+        // utils.transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);
 
         // draw scene
 
         utils.transition_image_layout(cmd, self.render_image.image, .color_attachment_optimal, .transfer_src_optimal);
-
 
         // copy draw image to swapchain image
         utils.transition_image_layout(cmd, self.swapchain.images[image_index], .@"undefined", .transfer_dst_optimal);
@@ -628,16 +627,35 @@ pub const Renderer = struct {
     }
 
     pub fn rebuild_swapchain(self: *Renderer, allocator: std.mem.Allocator, window: *c.SDL_Window) !void {
-        vk.deviceWaitIdle(self.device) catch |err| {
-            std.log.warn("Wait for device idle raised an error : {any}", .{err});
-        };
+        self.stop();
 
+        self.depth_image.deinit(self.device, self.vma);
+        self.render_image.deinit(self.device, self.vma);
+        
         // clean up swapchain & resources
         self.swapchain.deinit(self.device);
 
         // build swapchain
         const window_extent = current_window_extent(window) catch vk.Extent2D { .width = 400, .height = 400 }; // try with min res
         self.swapchain = try Swapchain.init(allocator, self.device, self.gpu, self.surface, window_extent);
+        errdefer self.swapchain.deinit(self.device);
+
+        const render_extent = vk.Extent3D {
+            .width = window_extent.width,
+            .height = window_extent.height,
+            .depth = 1
+        };
+
+        const render_image_usage: vk.ImageUsageFlags = .{ .transfer_src_bit = true, .storage_bit = true, .color_attachment_bit = true };
+
+        self.render_image = types.Image.init(self.vma, self.device, .r16g16b16a16_sfloat, render_extent, render_image_usage, .{ .color_bit = true }) catch |err| {
+            std.log.err("failed to create render image", .{});
+            return err;
+        };
+        errdefer self.render_image.deinit(self.device, self.vma);
+
+        self.depth_image = try types.Image.init(self.vma, self.device, .d32_sfloat, render_extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
+        errdefer self.depth_image.deinit(self.device, self.vma);
     }
 };
 
