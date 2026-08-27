@@ -2,9 +2,25 @@ pub const GradiantScene = struct {
     render_graph: render.RenderGraph,
     pipeline: shaders.Pipeline,
 
-    pub fn init(allocator: std.mem.Allocator) GradiantScene {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device, descriptor_set_layout: vk.DescriptorSetLayout) !GradiantScene {
+        const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
+        defer allocator.free(exe_dir);
+
+        const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gradiant.spirv", .{ exe_dir });
+        defer allocator.free(shader_path);
+
+        const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
+        defer vk.destroyShaderModule(device, shader_module, null);
+
+        const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
+            .sType = .pipeline_layout_create_info,
+            .setLayoutCount = 1,
+            .pSetLayouts = &descriptor_set_layout
+        };
+        const pipeline = try shaders.Pipeline.init(device, pipeline_layout_info, shader_module);
+
         return .{
-            .pipeline = undefined,
+            .pipeline = pipeline,
             .render_graph = render.RenderGraph.init(allocator)
         };
     }
@@ -12,7 +28,13 @@ pub const GradiantScene = struct {
     pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, ctx: render.Context, image: *const types.Image) void {
         self.render_graph.clear();
 
-        var render_pass = render.RenderPass.init(allocator, &render_gradiant, ctx);
+        const context = render.Context {
+            .pipeline = &self.pipeline,
+            .descriptor_sets = ctx.descriptor_sets,
+            .dispatch_size = ctx.dispatch_size
+        };
+
+        var render_pass = render.RenderPass.init(allocator, &render_gradiant, context);
 
         const render_image = render.ImageResource {
             .image = image,
@@ -32,6 +54,7 @@ pub const GradiantScene = struct {
     }
 
     pub fn deinit(self: *GradiantScene) void {
+        self.pipeline.deinit();
         self.render_graph.deinit();
     }
 };

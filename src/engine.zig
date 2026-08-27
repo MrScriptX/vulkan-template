@@ -353,9 +353,9 @@ pub const Renderer = struct {
     descriptor_set: vk.DescriptorSet,
     descriptor_set_layout: vk.DescriptorSetLayout, 
 
-    pipeline: shaders.Pipeline,
+    // pipeline: shaders.Pipeline,
 
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
+    pub fn init(allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
             .VK_LAYER_KHRONOS_validation = true // when debug
         };
@@ -447,6 +447,24 @@ pub const Renderer = struct {
         const descriptor_set_layout = try layout_builder.build(device, .{});
         errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layout, null);
 
+        // create a dummy compute pipeline for test
+        // const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
+        // defer allocator.free(exe_dir);
+
+        // const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gradiant.spirv", .{ exe_dir });
+        // defer allocator.free(shader_path);
+
+        // const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
+        // defer vk.destroyShaderModule(device, shader_module, null);
+
+        // const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
+        //     .sType = .pipeline_layout_create_info,
+        //     .setLayoutCount = 1,
+        //     .pSetLayouts = &descriptor_set_layout
+        // };
+        // const pipeline = try shaders.Pipeline.init(device, pipeline_layout_info, shader_module);
+
+        // allocate descriptor set
         const descriptor_set = try da.allocate(descriptor_set_layout);
 
         var descriptor_writer = descriptors.Writer.init(allocator);
@@ -454,23 +472,6 @@ pub const Renderer = struct {
 
         try descriptor_writer.addImage(0, render_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
         descriptor_writer.write(device, descriptor_set);
-
-        // create a dummy compute pipeline for test
-        const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
-        defer allocator.free(exe_dir);
-
-        const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gradiant.spirv", .{ exe_dir });
-        defer allocator.free(shader_path);
-
-        const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
-        defer vk.destroyShaderModule(device, shader_module, null);
-
-        const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
-            .sType = .pipeline_layout_create_info,
-            .setLayoutCount = 1,
-            .pSetLayouts = &descriptor_set_layout
-        };
-        const pipeline = try shaders.Pipeline.init(device, pipeline_layout_info, shader_module);
 
         return .{
             .instance = instance,
@@ -492,7 +493,7 @@ pub const Renderer = struct {
             .descriptor_set_layout = descriptor_set_layout,
             .descriptor_set = descriptor_set,
 
-            .pipeline = pipeline
+            // .pipeline = pipeline
         };
     }
 
@@ -501,7 +502,7 @@ pub const Renderer = struct {
             std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
         };
 
-        self.pipeline.deinit();
+        // self.pipeline.deinit();
 
         self.descriptor_allocator.deinit(self.device);
         vk.destroyDescriptorSetLayout(self.device, self.descriptor_set_layout, null);

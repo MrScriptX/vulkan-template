@@ -21,13 +21,16 @@ pub fn main(proc: std.process.Init) !void {
         std.log.debug("Memory check : {any}\n", .{ status });
     }
 
-    var renderer = engine.Renderer.init(proc.io, allocator, "Vulkan Template", window.?) catch {
+    var renderer = engine.Renderer.init(allocator, "Vulkan Template", window.?) catch {
         std.log.err("Renderer initialization failed", .{});
         return;
     };
     defer renderer.deinit(allocator);
 
-    var app = Engine.init(allocator, &renderer);
+    var app = Engine.init(allocator, proc.io, &renderer) catch |e| {
+        std.log.err("failed to init engine", .{});
+        return e;
+    };
     defer app.deinit();
 
     var quit = false;
@@ -67,10 +70,10 @@ const Engine = struct {
     renderer: *const engine.Renderer,
     scene: scenes.GradiantScene,
 
-    pub fn init(allocator: std.mem.Allocator, renderer: *const engine.Renderer) Engine {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, renderer: *const engine.Renderer) !Engine {
         return .{
             .renderer = renderer,
-            .scene = scenes.GradiantScene.init(allocator)
+            .scene = try scenes.GradiantScene.init(allocator, io, renderer.device, renderer.descriptor_set_layout)
         };
     }
 
@@ -79,7 +82,7 @@ const Engine = struct {
 
         // TEST
         const ctx = render.Context {
-            .pipeline = &self.renderer.pipeline,
+            .pipeline = undefined,
             .descriptor_sets = try allocator.alloc(vk.DescriptorSet, 1),
             .dispatch_size = .{
                 self.renderer.render_image.extent.width / 16,

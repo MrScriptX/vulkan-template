@@ -93,7 +93,7 @@ pub const RenderGraph = struct {
 pub const RenderPass = struct {
     allocator: std.mem.Allocator,
     
-    images: std.ArrayList(ImageResource), // handle to state, current state is given by render graph
+    images: std.ArrayList(ImageResource), // handle wanted state
     ctx: Context,
 
     callback: FnRender,
