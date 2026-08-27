@@ -67,6 +67,8 @@ pub const RenderGraph = struct {
                 const dst_layout = res.layout;
 
                 utils.transition_image_layout(cmd, res.image.image, src_layout, dst_layout);
+
+                current.layout = dst_layout;
             }
 
             pass.exec(cmd);
