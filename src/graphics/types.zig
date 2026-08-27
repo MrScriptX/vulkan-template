@@ -67,6 +67,43 @@ pub const Image = struct {
     }
 };
 
+pub const Buffer = struct {
+    handle: vk.Buffer,
+    allocation: c.VmaAllocation,
+    info: c.VmaAllocationInfo,
+
+    pub fn init(vma: c.VmaAllocator, size: usize, usage: vk.BufferUsageFlags, mem_usage: c.VmaMemoryUsage) Buffer {
+        const buffer_create_info = vk.BufferCreateInfo {
+            .sType = .buffer_create_info,
+            .size = size,
+            .usage = usage
+        };
+
+        const allocation_create_info = c.VmaAllocationCreateInfo {
+            .usage = mem_usage,
+            .flags = c.VMA_ALLOCATION_CREATE_MAPPED_BIT
+        };
+
+        const buffer: vk.Buffer = undefined;
+        var allocation: c.VmaAllocation = undefined;
+        var allocation_info: c.VmaAllocationInfo = undefined;
+        vk_interop.vmaCreateBuffer(vma, @ptrCast(&buffer_create_info), &allocation_create_info, @ptrCast(buffer), &allocation, &allocation_info) catch |err| {
+            std.log.err("failed to allocate new buffer. error : {any}", .{err});
+            return err;
+        };
+
+        return .{
+            .handle = buffer,
+            .allocation = allocation,
+            .info = allocation_info
+        };
+    }
+
+    pub fn deinit(self: *Buffer, vma: c.VmaAllocator) void {
+        c.vmaDestroyBuffer(vma, vk_interop.bufferToC(self.handle), self.allocation);
+    }
+};
+
 const std = @import("std");
 const vk = @import("vk");
 const c = @import("c");

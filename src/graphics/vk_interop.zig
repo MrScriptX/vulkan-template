@@ -22,6 +22,14 @@ pub inline fn imageFromC(handle: c.VkImage) vk.Image {
     return @enumFromInt(@intFromPtr(handle));
 }
 
+pub inline fn bufferToC(handle: vk.Buffer) c.VkBuffer {
+    return @ptrFromInt(@intFromEnum(handle));
+}
+
+pub inline fn bufferFromC(handle: c.VkBuffer) vk.Buffer {
+    return @enumFromInt(@intFromPtr(handle));
+}
+
 pub fn vmaCreateAllocator(p_create_info: *const c.VmaAllocatorCreateInfo, p_allocator: *c.VmaAllocator) vk.Error!void {
     try vk.check_result(@enumFromInt(c.vmaCreateAllocator(p_create_info, p_allocator)));
 }
@@ -34,7 +42,22 @@ pub fn vmaCreateImage(
     p_allocation: *c.VmaAllocation,
     p_allocation_info: ?*c.VmaAllocationInfo,
 ) vk.Error!void {
-    try vk.check_result(@enumFromInt(c.vmaCreateImage(allocator, p_image_create_info, p_alloc_create_info, p_image, p_allocation, p_allocation_info)));
+    try vk.check_result(@enumFromInt(c.vmaCreateImage(
+        allocator, p_image_create_info, p_alloc_create_info, p_image, p_allocation, p_allocation_info
+    )));
+}
+
+pub fn vmaCreateBuffer(
+    allocator: c.VmaAllocator,
+    p_buffer_create_info: *const c.VkBufferCreateInfo,
+    p_alloc_create_info: *const c.VmaAllocationCreateInfo,
+    p_buffer: *c.VkBuffer,
+    p_allocation: *c.VmaAllocation,
+    p_allocation_info: ?*c.VmaAllocationInfo,
+    ) vk.Error!void {
+    try vk.check_result(@enumFromInt(c.vmaCreateBuffer(
+        allocator, p_buffer_create_info, p_alloc_create_info, p_buffer, p_allocation, p_allocation_info
+    )));
 }
 
 const c = @import("c");
