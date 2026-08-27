@@ -4,6 +4,8 @@ pub const RenderGraph = struct {
     passes: std.ArrayList(RenderPass),
 
     images: std.ArrayList(ImageResource), // handle current state
+    buffers: std.ArrayList(BufferResource),
+
     output: ?ImageResource,
     
     pub fn init(allocator: std.mem.Allocator) RenderGraph {
@@ -11,11 +13,13 @@ pub const RenderGraph = struct {
             .allocator = allocator,
             .passes = std.ArrayList(RenderPass).empty,
             .images = std.ArrayList(ImageResource).empty,
+            .buffers = std.ArrayList(BufferResource).empty,
             .output = null
         };
     }
 
     pub fn clear(self: *RenderGraph) void {
+        self.buffers.clearRetainingCapacity();
         self.images.clearRetainingCapacity();
 
         for (self.passes.items) |*pass| {
@@ -26,6 +30,7 @@ pub const RenderGraph = struct {
     }
 
     pub fn deinit(self: *RenderGraph) void {
+        self.buffers.deinit(self.allocator);
         self.images.deinit(self.allocator);
 
         for (self.passes.items) |*pass| {
@@ -45,6 +50,21 @@ pub const RenderGraph = struct {
                 };
 
                 self.images.append(self.allocator, current_state) catch |err| {
+                    std.log.err("failed to add image resource to list. error : {any}", .{err});
+                    return err;
+                };
+            };
+        }
+
+        for (pass.buffers.items) |res| {
+            _ = self.findBuffer(res.buffer) catch {
+                const current_state: BufferResource = .{
+                    .buffer = res.buffer,
+                    .stage = .{},
+                    .access = .{}
+                };
+
+                self.buffers.append(self.allocator, current_state) catch |err| {
                     std.log.err("failed to add image resource to list. error : {any}", .{err});
                     return err;
                 };
@@ -89,6 +109,45 @@ pub const RenderGraph = struct {
                 current.layout = dst_layout;
             }
 
+            var barriers = std.ArrayList(vk.BufferMemoryBarrier2).empty;
+            defer barriers.deinit(self.allocator);
+
+            for (pass.buffers.items) |res| {
+                const current = self.findBuffer(res.buffer) catch {
+                    std.log.err("buffer resource not found. This should never happen", .{});
+                    continue;
+                };
+
+                const barrier = vk.BufferMemoryBarrier2 {
+                    .sType = .buffer_memory_barrier_2,
+                    .srcStageMask = current.stage,
+                    .srcAccessMask = current.access,
+                    
+                    .dstStageMask = res.stage,
+                    .dstAccessMask = res.access,
+                    
+                    .srcQueueFamilyIndex = 0,
+                    .dstQueueFamilyIndex = 0,
+                    
+                    .buffer = res.buffer.handle,
+                    .offset = 0,
+                    .size = 0,
+                };
+
+                barriers.append(self.allocator, barrier) catch {
+                    std.log.err("failed to allocate barrier.", .{});
+                    continue;
+                };
+            }
+
+            const dependency = vk.DependencyInfo{
+                .sType = .dependency_info,
+                .bufferMemoryBarrierCount = @intCast(barriers.items.len),
+                .pBufferMemoryBarriers = barriers.items.ptr,
+            };
+
+            vk.cmdPipelineBarrier2(cmd, &dependency);
+
             pass.exec(cmd);
         }
 
@@ -108,6 +167,16 @@ pub const RenderGraph = struct {
     fn findImage(self: *const RenderGraph, image: *const types.Image) !*ImageResource {
         for (self.images.items) |*i| {
             if (i.image == image) {
+                return i;
+            }
+        }
+
+        return Error.NotFound;
+    }
+
+    fn findBuffer(self: *const RenderGraph, buffer: *const types.Buffer) !*BufferResource {
+        for (self.buffers.items) |*i| {
+            if (i.buffer == buffer) {
                 return i;
             }
         }
@@ -169,7 +238,9 @@ pub const RenderPass = struct {
 };
 
 pub const BufferResource = struct {
-    buffer: *const types.Buffer, 
+    buffer: *const types.Buffer,
+    stage: vk.PipelineStageFlags2,
+    access: vk.AccessFlags2
 };
 
 pub const ImageResource = struct {

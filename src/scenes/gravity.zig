@@ -14,8 +14,9 @@ pub const GravityScene = struct {
 
         const initial_state = State {
             .object = .{
-                .pos = @splat(0)
-            }
+                .pos = @splat(0),
+            },
+            .delta_time = 0
         };
 
         // allocate data buffer
@@ -56,7 +57,7 @@ pub const GravityScene = struct {
         const shader_data = GravityShader.Data {
             .object_buffer = self.buffer.handle,
             .object_offset = 0,
-            .descriptor_set = try self.da.allocate(self.self.gravity_shader.layouts[0])
+            .descriptor_set = try self.da.allocate(self.gravity_shader.layouts[0])
         };
         self.gravity_shader.write(shader_data);
 
@@ -64,7 +65,14 @@ pub const GravityScene = struct {
         self.render_graph.clear();
 
         const object_resource = render.BufferResource {
-            .buffer = &self.buffer
+            .buffer = &self.buffer,
+            .access = .{
+                .shader_storage_read_bit = true,
+                .shader_storage_write_bit = true,
+            },
+            .stage = .{
+                .compute_shader_bit = true
+            }
         };
 
         // gravity compute pass
@@ -98,7 +106,8 @@ pub const GravityScene = struct {
     }
 
     const State = struct {
-        object: Object
+        object: Object,
+        delta_time: f32
     };
 };
 
@@ -164,7 +173,7 @@ const GravityShader = struct {
 
     pub fn write(self: *GravityShader, data: Data) void {
         self.writer.clear();
-        self.writer.addBuffer(0, data.object_buffer, data.offset, @sizeOf(Object), .storage_buffer);
+        self.writer.addBuffer(0, data.object_buffer, data.object_offset, @sizeOf(Object), .storage_buffer);
 
         self.writer.write(self.device, data.descriptor_set);
     }
