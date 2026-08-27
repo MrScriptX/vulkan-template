@@ -349,12 +349,6 @@ pub const Renderer = struct {
     render_image: types.Image, // image use to record scene command
     depth_image: types.Image,
 
-    descriptor_allocator: allocators.Descriptor, // per render image descriptor allocator
-    descriptor_set: vk.DescriptorSet,
-    descriptor_set_layout: vk.DescriptorSetLayout, 
-
-    // pipeline: shaders.Pipeline,
-
     pub fn init(allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
             .VK_LAYER_KHRONOS_validation = true // when debug
@@ -426,53 +420,6 @@ pub const Renderer = struct {
         const depth_image = try types.Image.init(vma, device, .d32_sfloat, render_extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
         errdefer depth_image.deinit(device, vma);
 
-        // create global descriptor allocator 
-        const pool_sizes = [_]descriptors.PoolSizeRatio {
-            .{ .kind = vk.DescriptorType.storage_image, .ratio = 1 }
-        };
-
-        var da = allocators.Descriptor.init(allocator, device, 12, &pool_sizes) catch |err| {
-            std.log.err("failed to create descriptor allocator.", .{});
-            return err;
-        };
-        errdefer da.deinit(device);
-
-        var layout_builder = descriptors.LayoutBuilder.init(allocator);
-        defer layout_builder.deinit();
-
-        const shader_stages: vk.ShaderStageFlags = .{
-            .compute_bit = true
-        };
-        try layout_builder.addBinding(0, .storage_image, shader_stages);
-        const descriptor_set_layout = try layout_builder.build(device, .{});
-        errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layout, null);
-
-        // create a dummy compute pipeline for test
-        // const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
-        // defer allocator.free(exe_dir);
-
-        // const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gradiant.spirv", .{ exe_dir });
-        // defer allocator.free(shader_path);
-
-        // const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
-        // defer vk.destroyShaderModule(device, shader_module, null);
-
-        // const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
-        //     .sType = .pipeline_layout_create_info,
-        //     .setLayoutCount = 1,
-        //     .pSetLayouts = &descriptor_set_layout
-        // };
-        // const pipeline = try shaders.Pipeline.init(device, pipeline_layout_info, shader_module);
-
-        // allocate descriptor set
-        const descriptor_set = try da.allocate(descriptor_set_layout);
-
-        var descriptor_writer = descriptors.Writer.init(allocator);
-        defer descriptor_writer.deinit();
-
-        try descriptor_writer.addImage(0, render_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
-        descriptor_writer.write(device, descriptor_set);
-
         return .{
             .instance = instance,
             .surface = surface,
@@ -488,24 +435,11 @@ pub const Renderer = struct {
             .frames = frames,
             .render_image = render_image,
             .depth_image = depth_image,
-
-            .descriptor_allocator = da,
-            .descriptor_set_layout = descriptor_set_layout,
-            .descriptor_set = descriptor_set,
-
-            // .pipeline = pipeline
         };
     }
 
     pub fn deinit(self: *Renderer, allocator: std.mem.Allocator) void {
-        vk.deviceWaitIdle(self.device) catch |err| {
-            std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
-        };
-
-        // self.pipeline.deinit();
-
-        self.descriptor_allocator.deinit(self.device);
-        vk.destroyDescriptorSetLayout(self.device, self.descriptor_set_layout, null);
+        self.stop();
 
         self.depth_image.deinit(self.device, self.vma);
         self.render_image.deinit(self.device, self.vma);
@@ -521,6 +455,13 @@ pub const Renderer = struct {
         vk.destroyDevice(self.device, null);
         vk.destroySurfaceKHR(self.instance, self.surface, null);
         vk.destroyInstance(self.instance, null);
+    }
+
+    /// Wait for the renderer to complete all tasks
+    pub fn stop(self: *const Renderer) void {
+        vk.deviceWaitIdle(self.device) catch |err| {
+            std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
+        };
     }
 
     pub fn draw(self: *const Renderer, frame_index: u32, scene: *gradiant.GradiantScene) !void {
@@ -548,18 +489,7 @@ pub const Renderer = struct {
             return Error.SkipImage;
         };
 
-        // utils.transition_image_layout(cmd, self.render_image.image, .@"undefined", .general);
-
         scene.draw(cmd);
-
-        // draw background
-        // vk.cmdBindPipeline(cmd, .compute, self.pipeline.handle);
-
-        // vk.cmdBindDescriptorSets(cmd, .compute, self.pipeline.layout, 0, 1, &self.descriptor_set, 0, null);
-
-        // const group_x = self.render_image.extent.width / 16;
-        // const group_y = self.render_image.extent.height / 16;
-        // vk.cmdDispatch(cmd, group_x, group_y, 1);
 
         utils.transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
         utils.transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);

@@ -71,38 +71,27 @@ const Engine = struct {
     scene: scenes.GradiantScene,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, renderer: *const engine.Renderer) !Engine {
+        const scene = try scenes.GradiantScene.init(allocator, io, renderer.device, renderer.render_image);
+        
         return .{
             .renderer = renderer,
-            .scene = try scenes.GradiantScene.init(allocator, io, renderer.device, renderer.descriptor_set_layout)
+            .scene = scene
         };
     }
 
     pub fn draw(self: *Engine, allocator: std.mem.Allocator) !void {
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
 
-        // TEST
-        const ctx = render.Context {
-            .pipeline = undefined,
-            .descriptor_sets = try allocator.alloc(vk.DescriptorSet, 1),
-            .dispatch_size = .{
-                self.renderer.render_image.extent.width / 16,
-                self.renderer.render_image.extent.height / 16,
-                1
-            }
-        };
-        defer allocator.free(ctx.descriptor_sets);
-
-        ctx.descriptor_sets[0] = self.renderer.descriptor_set;
-        // END TEST
-
-        self.scene.update(allocator, ctx, &self.renderer.render_image);
+        try self.scene.update(allocator, &self.renderer.render_image);
 
         try self.renderer.draw(frame_index, &self.scene);
         self.frame_count += 1;
     }
 
     pub fn deinit(self: *Engine) void {
-        self.scene.deinit();
+        self.renderer.stop();
+
+        self.scene.deinit(self.renderer.device);
     }
 };
 

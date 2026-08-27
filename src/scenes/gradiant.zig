@@ -1,8 +1,37 @@
 pub const GradiantScene = struct {
+    allocator: std.mem.Allocator,
+
     render_graph: render.RenderGraph,
+
+    descriptor_allocator: allocators.Descriptor,
+    descriptor_set_layout: vk.DescriptorSetLayout,
+    descriptor_sets: []vk.DescriptorSet,
+
     pipeline: shaders.Pipeline,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device, descriptor_set_layout: vk.DescriptorSetLayout) !GradiantScene {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device, render_image: types.Image) !GradiantScene {
+        // create descriptor allocator
+        const pool_sizes = [_]descriptors.PoolSizeRatio {
+            .{ .kind = vk.DescriptorType.storage_image, .ratio = 1 }
+        };
+        var da = allocators.Descriptor.init(allocator, device, 1, &pool_sizes) catch {
+            std.log.err("failed to initialize descriptor allocator.", .{});
+            return Error.initialization_failed;
+        };
+        errdefer da.deinit(device);
+
+        // create descriptor layout
+        var layout_builder = descriptors.LayoutBuilder.init(allocator);
+        defer layout_builder.deinit();
+        
+        const shader_stages: vk.ShaderStageFlags = .{
+            .compute_bit = true
+        };
+        try layout_builder.addBinding(0, .storage_image, shader_stages);
+        const descriptor_set_layout = try layout_builder.build(device, .{});
+        errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layout, null);
+
+        // create pipeline
         const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
         defer allocator.free(exe_dir);
 
@@ -19,22 +48,47 @@ pub const GradiantScene = struct {
         };
         const pipeline = try shaders.Pipeline.init(device, pipeline_layout_info, shader_module);
 
+        // allocate descriptor set
+        const descriptor_set = try da.allocate(descriptor_set_layout);
+
+        var descriptor_writer = descriptors.Writer.init(allocator);
+        defer descriptor_writer.deinit();
+
+        try descriptor_writer.addImage(0, render_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
+        descriptor_writer.write(device, descriptor_set);
+
+        const descriptor_sets = allocator.alloc(vk.DescriptorSet, 1) catch {
+            std.log.err("failed to allocate descriptor sets.", .{});
+            return Error.initialization_failed;
+        };
+        descriptor_sets[0] = descriptor_set;
+
         return .{
+            .allocator = allocator,
+
+            .render_graph = render.RenderGraph.init(allocator),
+
             .pipeline = pipeline,
-            .render_graph = render.RenderGraph.init(allocator)
+            .descriptor_allocator = da,
+            .descriptor_set_layout = descriptor_set_layout,
+            .descriptor_sets = descriptor_sets
         };
     }
 
-    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, ctx: render.Context, image: *const types.Image) void {
+    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, image: *const types.Image) !void {
         self.render_graph.clear();
 
-        const context = render.Context {
+        const ctx = render.Context {
             .pipeline = &self.pipeline,
-            .descriptor_sets = ctx.descriptor_sets,
-            .dispatch_size = ctx.dispatch_size
+            .descriptor_sets = self.descriptor_sets,
+            .dispatch_size = .{
+                image.extent.width / 16,
+                image.extent.height / 16,
+                1
+            }
         };
 
-        var render_pass = render.RenderPass.init(allocator, &render_gradiant, context);
+        var render_pass = render.RenderPass.init(allocator, &render_gradiant, ctx);
 
         const render_image = render.ImageResource {
             .image = image,
@@ -53,10 +107,20 @@ pub const GradiantScene = struct {
         self.render_graph.exec(cmd);
     }
 
-    pub fn deinit(self: *GradiantScene) void {
+    pub fn deinit(self: *GradiantScene, device: vk.Device) void {
+        self.allocator.free(self.descriptor_sets);
+
         self.pipeline.deinit();
+
+        self.descriptor_allocator.deinit(device);
+        vk.destroyDescriptorSetLayout(device, self.descriptor_set_layout, null);
+        
         self.render_graph.deinit();
     }
+
+    const Error = error {
+        initialization_failed
+    };
 };
 
 fn render_gradiant(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
@@ -70,3 +134,5 @@ const vk = @import("vk");
 const shaders = @import("../graphics/shaders.zig");
 const render = @import("../render.zig");
 const types = @import("../graphics/types.zig");
+const allocators = @import("../graphics/allocators.zig");
+const descriptors = @import("../graphics/descriptors.zig");
