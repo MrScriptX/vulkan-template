@@ -346,8 +346,9 @@ pub const Renderer = struct {
 
     frames: []Frame,
 
-    render_image: types.Image, // image use to record scene command
-    depth_image: types.Image,
+    draw_resource: render.DrawResource,
+    // render_image: types.Image, // image use to record scene command
+    // depth_image: types.Image,
 
     pub fn init(allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
@@ -402,23 +403,27 @@ pub const Renderer = struct {
         }
         errdefer for (0..frame_count) |i| frames[i].deinit(device);
 
+        // initialize draw resource
+        const draw_resource = try render.DrawResource.init(vma, device, window_extent.width, window_extent.height);
+        errdefer draw_resource.deinit(vma, device);
+
         // create the render images
-        const render_extent = vk.Extent3D {
-            .width = swapchain.extent.width,
-            .height = swapchain.extent.height,
-            .depth = 1
-        };
+        // const render_extent = vk.Extent3D {
+        //     .width = swapchain.extent.width,
+        //     .height = swapchain.extent.height,
+        //     .depth = 1
+        // };
 
-        const render_image_usage: vk.ImageUsageFlags = .{ .transfer_src_bit = true, .storage_bit = true, .color_attachment_bit = true };
+        // const render_image_usage: vk.ImageUsageFlags = .{ .transfer_src_bit = true, .storage_bit = true, .color_attachment_bit = true };
 
-        const render_image = types.Image.init(vma, device, .r16g16b16a16_sfloat, render_extent, render_image_usage, .{ .color_bit = true }) catch |err| {
-            std.log.err("failed to create render image", .{});
-            return err;
-        };
-        errdefer render_image.deinit(device, vma);
+        // const render_image = types.Image.init(vma, device, .r16g16b16a16_sfloat, render_extent, render_image_usage, .{ .color_bit = true }) catch |err| {
+        //     std.log.err("failed to create render image", .{});
+        //     return err;
+        // };
+        // errdefer render_image.deinit(device, vma);
 
-        const depth_image = try types.Image.init(vma, device, .d32_sfloat, render_extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
-        errdefer depth_image.deinit(device, vma);
+        // const depth_image = try types.Image.init(vma, device, .d32_sfloat, render_extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
+        // errdefer depth_image.deinit(device, vma);
 
         return .{
             .instance = instance,
@@ -433,16 +438,18 @@ pub const Renderer = struct {
             .layers = layers,
 
             .frames = frames,
-            .render_image = render_image,
-            .depth_image = depth_image,
+            .draw_resource = draw_resource
+            // .render_image = render_image,
+            // .depth_image = depth_image,
         };
     }
 
     pub fn deinit(self: *Renderer, allocator: std.mem.Allocator) void {
         self.stop();
 
-        self.depth_image.deinit(self.device, self.vma);
-        self.render_image.deinit(self.device, self.vma);
+        // self.depth_image.deinit(self.device, self.vma);
+        // self.render_image.deinit(self.device, self.vma);
+        self.draw_resource.deinit(self.vma, self.device);
 
         for (0..self.frames.len) |i| {
             self.frames[i].deinit(self.device);
@@ -491,21 +498,14 @@ pub const Renderer = struct {
 
         scene.draw(cmd);
 
-        // utils.transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
-        // utils.transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);
-
-        // draw scene
-
-        utils.transition_image_layout(cmd, self.render_image.image, .color_attachment_optimal, .transfer_src_optimal);
-
         // copy draw image to swapchain image
         utils.transition_image_layout(cmd, self.swapchain.images[image_index], .@"undefined", .transfer_dst_optimal);
 
         const render_image_extent = vk.Extent2D {
-            .width = self.render_image.extent.width,
-            .height = self.render_image.extent.height,
+            .width = self.draw_resource.color_image.extent.width,
+            .height = self.draw_resource.color_image.extent.height,
         };
-        blit_image(cmd, self.render_image.image, self.swapchain.images[image_index], render_image_extent, self.swapchain.extent);
+        blit_image(cmd, self.draw_resource.color_image.image, self.swapchain.images[image_index], render_image_extent, self.swapchain.extent);
 
         utils.transition_image_layout(cmd, self.swapchain.images[image_index], .transfer_dst_optimal, .color_attachment_optimal);
 
@@ -629,8 +629,9 @@ pub const Renderer = struct {
     pub fn rebuild_swapchain(self: *Renderer, allocator: std.mem.Allocator, window: *c.SDL_Window) !void {
         self.stop();
 
-        self.depth_image.deinit(self.device, self.vma);
-        self.render_image.deinit(self.device, self.vma);
+        // self.depth_image.deinit(self.device, self.vma);
+        // self.render_image.deinit(self.device, self.vma);
+        self.draw_resource.deinit(self.vma, self.device);
         
         // clean up swapchain & resources
         self.swapchain.deinit(self.device);
@@ -640,22 +641,7 @@ pub const Renderer = struct {
         self.swapchain = try Swapchain.init(allocator, self.device, self.gpu, self.surface, window_extent);
         errdefer self.swapchain.deinit(self.device);
 
-        const render_extent = vk.Extent3D {
-            .width = window_extent.width,
-            .height = window_extent.height,
-            .depth = 1
-        };
-
-        const render_image_usage: vk.ImageUsageFlags = .{ .transfer_src_bit = true, .storage_bit = true, .color_attachment_bit = true };
-
-        self.render_image = types.Image.init(self.vma, self.device, .r16g16b16a16_sfloat, render_extent, render_image_usage, .{ .color_bit = true }) catch |err| {
-            std.log.err("failed to create render image", .{});
-            return err;
-        };
-        errdefer self.render_image.deinit(self.device, self.vma);
-
-        self.depth_image = try types.Image.init(self.vma, self.device, .d32_sfloat, render_extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
-        errdefer self.depth_image.deinit(self.device, self.vma);
+        self.draw_resource = try render.DrawResource.init(self.vma, self.device, window_extent.width, window_extent.height);
     }
 };
 
@@ -1141,3 +1127,4 @@ const shaders = @import("graphics/shaders.zig");
 const types = @import("graphics/types.zig");
 const gradiant = @import("scenes/gradiant.zig");
 const utils = @import("graphics/utils.zig");
+const render = @import("render.zig");

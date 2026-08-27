@@ -71,29 +71,29 @@ pub const GradiantScene = struct {
         };
     }
 
-    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, device: vk.Device, color_image: *const types.Image, depth_image: *const types.Image) !void {
+    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, device: vk.Device, draw_resource: *const render.DrawResource) !void {
         self.render_graph.clear();
 
         // check if needs update
-        if (color_image.extent.width != self.state.x_view or  color_image.extent.height != self.state.y_view) {
-            self.state.x_view = color_image.extent.width;
-            self.state.y_view = color_image.extent.height;
+        if (draw_resource.color_image.extent.width != self.state.x_view or  draw_resource.color_image.extent.height != self.state.y_view) {
+            self.state.x_view = draw_resource.color_image.extent.width;
+            self.state.y_view = draw_resource.color_image.extent.height;
 
             var descriptor_writer = descriptors.Writer.init(allocator);
             defer descriptor_writer.deinit();
 
-            try descriptor_writer.addImage(0, color_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
+            try descriptor_writer.addImage(0, draw_resource.color_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
             descriptor_writer.write(device, self.descriptor_sets[0]);
         }
 
         // prepare render graph
         var render_resource = render.ImageResource {
-            .image = color_image,
+            .image = &draw_resource.color_image,
             .layout = .general
         };
 
         const depth_resource = render.ImageResource {
-            .image = depth_image,
+            .image = &draw_resource.depth_image,
             .layout = .depth_attachment_optimal
         };
 
@@ -102,8 +102,8 @@ pub const GradiantScene = struct {
             .pipeline = &self.pipeline,
             .descriptor_sets = self.descriptor_sets,
             .dispatch_size = .{
-                color_image.extent.width / 16,
-                color_image.extent.height / 16,
+                draw_resource.color_image.extent.width / 16,
+                draw_resource.color_image.extent.height / 16,
                 1
             }
         };
@@ -131,6 +131,10 @@ pub const GradiantScene = struct {
 
         self.render_graph.addPass(empty_color_pass) catch |err| {
             std.log.err("failed to register empty pass. error : {any}", .{err});
+        };
+
+        self.render_graph.setOutput(render_resource) catch {
+            std.log.err("failed to set output.", .{});
         };
     }
 

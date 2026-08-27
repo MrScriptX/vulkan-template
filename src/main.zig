@@ -82,7 +82,7 @@ const Engine = struct {
     pub fn draw(self: *Engine, allocator: std.mem.Allocator) !void {
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
 
-        try self.scene.update(allocator, self.renderer.device, &self.renderer.render_image, &self.renderer.depth_image);
+        try self.scene.update(allocator, self.renderer.device, &self.renderer.draw_resource);
 
         try self.renderer.draw(frame_index, &self.scene);
         self.frame_count += 1;

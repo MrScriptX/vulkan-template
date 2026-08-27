@@ -4,12 +4,14 @@ pub const RenderGraph = struct {
     passes: std.ArrayList(RenderPass),
 
     images: std.ArrayList(ImageResource), // handle current state
+    output: ?ImageResource,
     
     pub fn init(allocator: std.mem.Allocator) RenderGraph {
         return .{
             .allocator = allocator,
             .passes = std.ArrayList(RenderPass).empty,
-            .images = std.ArrayList(ImageResource).empty
+            .images = std.ArrayList(ImageResource).empty,
+            .output = null
         };
     }
 
@@ -55,6 +57,22 @@ pub const RenderGraph = struct {
         };
     }
 
+    pub fn setOutput(self: *RenderGraph, image: ImageResource) !void {
+        _ = self.findImage(image.image) catch {
+            const current_state: ImageResource = .{
+                .image = image.image,
+                .layout = .@"undefined"
+            };
+
+            self.images.append(self.allocator, current_state) catch |err| {
+                std.log.err("failed to add image resource to list. error : {any}", .{err});
+                return err;
+            };
+        };
+
+        self.output = image;
+    }
+
     pub fn exec(self: *RenderGraph, cmd: vk.CommandBuffer) void {
         for (self.passes.items) |pass| {
             for (pass.images.items) |res| {
@@ -72,6 +90,18 @@ pub const RenderGraph = struct {
             }
 
             pass.exec(cmd);
+        }
+
+        if (self.output) |output| {
+            const current = self.findImage(output.image) catch {
+                std.log.err("image output not found. This should never happen", .{});
+                return;
+            };
+
+            utils.transition_image_layout(cmd, output.image.image, current.layout, .transfer_src_optimal);
+        }
+        else {
+            std.log.err("no output defined. call setOuput.", .{});
         }
     }
 
@@ -140,7 +170,49 @@ pub const Context = struct {
 
 pub const FnRender = *const fn(cmd: vk.CommandBuffer, ctx: *const Context) void;
 
+/// Base Resource  for drawing
+pub const DrawResource = struct {
+    color_image: types.Image,
+    depth_image: types.Image,
+
+    pub fn init(vma: c.VmaAllocator, device: vk.Device, width: u32, height: u32) !DrawResource {
+        const draw_image_usage: vk.ImageUsageFlags = .{ 
+            .transfer_src_bit = true,
+            .storage_bit = true,
+            .color_attachment_bit = true
+        };
+
+        const extent = vk.Extent3D {
+            .width = width,
+            .height = height,
+            .depth = 1
+        };
+        const draw_image = types.Image.init(vma, device, .r16g16b16a16_sfloat, extent, draw_image_usage, .{ .color_bit = true }) catch |err| {
+            std.log.err("failed to create draw image", .{});
+            return err;
+        };
+        errdefer draw_image.deinit(device, vma);
+
+        const depth_image = types.Image.init(vma, device, .d32_sfloat, extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true }) catch |err| {
+            std.log.err("failed to create depth image", .{});
+            return err;
+        };
+        errdefer depth_image.deinit(device, vma);
+
+        return .{
+            .color_image = draw_image,
+            .depth_image = depth_image
+        };
+    }
+
+    pub fn deinit(self: *DrawResource, vma: c.VmaAllocator, device: vk.Device) void {
+        self.color_image.deinit(device, vma);
+        self.depth_image.deinit(device, vma);
+    }
+};
+
 const std = @import("std");
+const c = @import("c");
 const vk = @import("vk");
 const types = @import("graphics/types.zig");
 const shaders = @import("graphics/shaders.zig");
