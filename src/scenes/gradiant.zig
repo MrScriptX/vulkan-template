@@ -147,8 +147,8 @@ pub const GradiantScene = struct {
 
         self.pipeline.deinit();
 
-        self.descriptor_allocator.deinit(device);
         vk.destroyDescriptorSetLayout(device, self.descriptor_set_layout, null);
+        self.descriptor_allocator.deinit(device);
         
         self.render_graph.deinit();
     }
