@@ -32,7 +32,6 @@ pub const GradiantScene = struct {
 
     pub fn deinit(self: *GradiantScene) void {
         self.render_graph.deinit();
-        self.deinit();
     }
 };
 
