@@ -73,6 +73,7 @@ const Engine = struct {
     gravity_scene: *gravity.GravityScene,
 
     live_scene: engine.Scene,
+    clock: Clock,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, renderer: *const engine.Renderer) !Engine {
         const gradiant_scene = try scenes.GradiantScene.init(allocator, io, renderer.device);
@@ -84,15 +85,17 @@ const Engine = struct {
             .renderer = renderer,
             .gradiant_scene = gradiant_scene,
             .gravity_scene = gravity_scene,
-            .live_scene = engine.Scene.interface(gravity.GravityScene, gravity_scene)
+            .live_scene = engine.Scene.interface(gravity.GravityScene, gravity_scene),
+            .clock = Clock.init(io)
         };
     }
 
     pub fn draw(self: *Engine) !void {
+        const dt = self.clock.ns_delta_time();
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
 
         // try self.gradiant_scene.update(allocator, &self.renderer.draw_resource);
-        try self.gravity_scene.update(&self.renderer.draw_resource);
+        try self.gravity_scene.update(dt, &self.renderer.draw_resource);
 
         try self.renderer.draw(frame_index, &self.live_scene);
         self.frame_count += 1;
@@ -112,6 +115,7 @@ const std = @import("std");
 const c = @import("c");
 const vk = @import("vk");
 const engine = @import("engine.zig");
+const Clock = @import("Clock.zig");
 const scenes = @import("scenes/gradiant.zig");
 const gravity = @import("scenes/gravity.zig");
 const render = @import("render.zig");

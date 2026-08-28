@@ -37,7 +37,7 @@ pub const LayoutBuilder = struct {
             .sType = vk.StructureType.descriptor_set_layout_create_info,
             .flags = flags,
             .bindingCount = @intCast(self.bindings.items.len),
-            .pBindings = self.bindings.items.ptr
+            .pBindings = self.bindings.items.ptr,
         };
 
         var descriptor_set_layout: vk.DescriptorSetLayout = undefined;

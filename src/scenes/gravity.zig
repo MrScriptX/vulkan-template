@@ -15,7 +15,7 @@ pub const GravityScene = struct {
 
         const initial_state = State {
             .object = .{
-                .pos = @splat(0),
+                .pos = .{ 0, 0 },
             },
             .delta_time = 0
         };
@@ -60,7 +60,7 @@ pub const GravityScene = struct {
         self.buffer.deinit(vma);
     }
 
-    pub fn update(self: *GravityScene, draw_resource: *const render.DrawResource) !void {
+    pub fn update(self: *GravityScene, dt: i96, draw_resource: *const render.DrawResource) !void {
         // update scene data
         const shader_data = GravityShader.Data {
             .object_buffer = self.buffer.handle,
@@ -75,8 +75,6 @@ pub const GravityScene = struct {
             .descriptor_set = try self.da.allocate(self.render_shader.layouts[0])
         };
         self.render_shader.write(render_shader_data);
-
-        // TODO : add delta time as push constant
 
         // build render graph
         self.render_graph.clear();
@@ -93,9 +91,21 @@ pub const GravityScene = struct {
         };
 
         // gravity compute pass
+        self.gravity_shader.push_constant = .{
+            .delta_time = @divTrunc(@as(i32, @intCast(dt)), 100)
+        };
         const gravity_pass_ctx = render.Context {
             .pipeline = &self.gravity_shader.pipeline,
             .descriptor_sets = &self.gravity_shader.bound_descriptor_sets,
+            .push_constant = vk.PushConstantsInfo{
+                .sType = .push_constants_info,
+                .layout = self.gravity_shader.pipeline.layout,
+                .stageFlags = .{
+                    .compute_bit = true
+                },
+                .size = @sizeOf(GravityShader.PushConstant),
+                .pValues = &self.gravity_shader.push_constant
+            },
             .dispatch_size = .{ 1, 1, 1 }
         };
         var gravity_pass = render.RenderPass.init(self.allocator, &compute_gravity, gravity_pass_ctx);
@@ -151,6 +161,9 @@ pub const GravityScene = struct {
 fn compute_gravity(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
     vk.cmdBindPipeline(cmd, .compute, ctx.pipeline.handle);
     vk.cmdBindDescriptorSets(cmd, .compute, ctx.pipeline.layout, 0, @intCast(ctx.descriptor_sets.len), ctx.descriptor_sets.ptr, 0, null);
+    
+    vk.cmdPushConstants2(cmd, &ctx.push_constant);
+
     vk.cmdDispatch(cmd, ctx.dispatch_size[0], ctx.dispatch_size[1], ctx.dispatch_size[2]);
 }
 
@@ -222,6 +235,7 @@ const GravityShader = struct {
     writer: descriptors.Writer,
 
     bound_descriptor_sets: [1]vk.DescriptorSet = .{ .null_handle },
+    push_constant: PushConstant,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !GravityShader {
         // create layout
@@ -239,6 +253,14 @@ const GravityShader = struct {
         descriptor_set_layouts[0] = try layout_builder.build(device, .{});
         errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layouts[0], null);
 
+        const push_constant_range = vk.PushConstantRange {
+            .size = @sizeOf(PushConstant),
+            .offset = 0,
+            .stageFlags = .{
+                .compute_bit = true
+            }
+        };
+
         // create pipeline
         const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
         defer allocator.free(exe_dir);
@@ -250,6 +272,7 @@ const GravityShader = struct {
         defer vk.destroyShaderModule(device, shader_module, null);
 
         var pipeline = try shaders.Pipeline.init(device, descriptor_set_layouts);
+        try pipeline.addPushConstant(allocator, push_constant_range);
         try pipeline.buildCompute(device, shader_module);
 
         return .{
@@ -258,6 +281,9 @@ const GravityShader = struct {
             .layouts = descriptor_set_layouts,
             .pipeline = pipeline,
             .writer = descriptors.Writer.init(allocator),
+            .push_constant = .{
+                .delta_time = 0
+            }
         };
     }
 
@@ -278,7 +304,7 @@ const GravityShader = struct {
         }
         self.allocator.free(self.layouts);
 
-        self.pipeline.deinit();
+        self.pipeline.deinit(self.allocator);
         self.writer.deinit();
     }
 
@@ -286,6 +312,10 @@ const GravityShader = struct {
         object_buffer: vk.Buffer,
         object_offset: u32,
         descriptor_set: vk.DescriptorSet
+    };
+
+    pub const PushConstant = struct {
+        delta_time: i32
     };
 };
 
@@ -360,7 +390,7 @@ const RenderShader = struct {
         }
         self.allocator.free(self.layouts);
 
-        self.pipeline.deinit();
+        self.pipeline.deinit(self.allocator);
         self.writer.deinit();
     }
 

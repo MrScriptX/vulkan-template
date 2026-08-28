@@ -6,32 +6,43 @@ pub const Pipeline = struct {
     handle: vk.Pipeline,
     layout: vk.PipelineLayout,
 
-    descriptor_set_layouts: []vk.DescriptorSetLayout,
+    descriptor_set_layouts: []const vk.DescriptorSetLayout,
+    push_constant_ranges: std.ArrayList(vk.PushConstantRange),
 
     pub fn init(device: vk.Device, descriptor_set_layouts: []vk.DescriptorSetLayout) !Pipeline {        
-        const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
-            .sType = .pipeline_layout_create_info,
-            .setLayoutCount = @intCast(descriptor_set_layouts.len),
-            .pSetLayouts = descriptor_set_layouts.ptr
-        };
-
-        var layout: vk.PipelineLayout = undefined;
-        vk.createPipelineLayout(device, &pipeline_layout_info, null, &layout) catch |err| {
-            std.log.err("failed to create pipeline layout. error : {any}", .{ err });
-            return err;
-        };
-        errdefer vk.destroyPipelineLayout(device, layout, null);
-
         return .{
             .device = device,
-            .layout = layout,
+            .layout = .null_handle,
             .handle = .null_handle,
-            .descriptor_set_layouts = descriptor_set_layouts
+            .descriptor_set_layouts = descriptor_set_layouts,
+            .push_constant_ranges = std.ArrayList(vk.PushConstantRange).empty
+        };
+    }
+
+    pub fn addPushConstant(self: *Pipeline, allocator: std.mem.Allocator, push_constant: vk.PushConstantRange) !void {
+        try self.push_constant_ranges.append(allocator, push_constant);
+    }
+
+    fn buildLayout(self: *Pipeline) !void {
+        const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
+            .sType = .pipeline_layout_create_info,
+            .setLayoutCount = @intCast(self.descriptor_set_layouts.len),
+            .pSetLayouts = self.descriptor_set_layouts.ptr,
+            .pushConstantRangeCount = @intCast(self.push_constant_ranges.items.len),
+            .pPushConstantRanges = self.push_constant_ranges.items.ptr
+        };
+
+        vk.createPipelineLayout(self.device, &pipeline_layout_info, null, &self.layout) catch |err| {
+            std.log.err("failed to create pipeline layout. error : {any}", .{ err });
+            return err;
         };
     }
 
     /// Build a compute shader
     pub fn buildCompute(self: *Pipeline, device: vk.Device, module: vk.ShaderModule) !void {
+        try self.buildLayout();
+        errdefer vk.destroyPipelineLayout(self.device, self.layout, null);
+
         const stage_info = vk.PipelineShaderStageCreateInfo {
             .sType = .pipeline_shader_stage_create_info,
             .module = module,
@@ -59,6 +70,9 @@ pub const Pipeline = struct {
     /// Build a graphics pipeline (vertex + fragment) using dynamic rendering, no vertex input,
     /// a triangle-list topology and a dynamic viewport/scissor. No depth test.
     pub fn buildGraphics(self: *Pipeline, device: vk.Device, vertex_module: vk.ShaderModule, fragment_module: vk.ShaderModule, color_format: vk.Format) !void {
+        try self.buildLayout();
+        errdefer vk.destroyPipelineLayout(self.device, self.layout, null);
+        
         const stages = [_]vk.PipelineShaderStageCreateInfo {
             .{
                 .sType = .pipeline_shader_stage_create_info,
@@ -169,7 +183,8 @@ pub const Pipeline = struct {
         };
     }
 
-    pub fn deinit(self: *Pipeline) void {
+    pub fn deinit(self: *Pipeline, allocator: std.mem.Allocator,) void {
+        self.push_constant_ranges.deinit(allocator);
         vk.destroyPipeline(self.device, self.handle, null);
         vk.destroyPipelineLayout(self.device, self.layout, null);
     }

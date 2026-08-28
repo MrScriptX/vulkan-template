@@ -197,7 +197,7 @@ const GradiantShader = struct {
         }
         self.allocator.free(self.layouts);
 
-        self.pipeline.deinit();
+        self.pipeline.deinit(self.allocator);
         self.writer.deinit();
     }
 
