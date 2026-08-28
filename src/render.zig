@@ -260,6 +260,7 @@ pub const Context = struct {
     color_view: vk.ImageView = .null_handle,
     extent: vk.Extent2D = .{ .width = 0, .height = 0 },
     vertex_count: u32 = 0,
+    instance_count: u32 = 0
 };
 
 pub const FnRender = *const fn(cmd: vk.CommandBuffer, ctx: *const Context) void;

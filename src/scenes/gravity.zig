@@ -13,12 +13,21 @@ pub const GravityScene = struct {
     pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device, vma: c.VmaAllocator) !GravityScene {
         const render_graph = render.RenderGraph.init(allocator);
 
+        // create initial state
         const initial_state = State {
-            .object = .{
-                .pos = .{ 0, 0 },
-                .mass = 1
+            .objects = &.{
+                .{
+                    .pos = .{ 0, 0 },
+                    .mass = 1
+                },
+                .{
+                    .pos = .{ 0, 0 },
+                    .mass = 1
+                }
             },
-            .delta_time = 0
+            .delta_time = 0,
+            .camera_pos = @splat(0),
+            .world_size = .{ 800, 600 }
         };
 
         // allocate data buffer
@@ -26,10 +35,10 @@ pub const GravityScene = struct {
             .storage_buffer_bit = true
         };
 
-        const buffer = try types.Buffer.init(vma, @sizeOf(Object), buffer_usage, c.VMA_MEMORY_USAGE_AUTO);
+        const buffer = try types.Buffer.init(vma, @sizeOf(Object) * initial_state.objects.len, buffer_usage, c.VMA_MEMORY_USAGE_AUTO);
 
         // upload intial state
-        try utils.upload_data(Object, vma, buffer.allocation, &initial_state.object);
+        try utils.upload_data_array(Object, vma, buffer.allocation, initial_state.objects);
 
         const gravity_shader = try GravityShader.init(allocator, io, device);
         const render_shader = try RenderShader.init(allocator, io, device);
@@ -110,7 +119,7 @@ pub const GravityScene = struct {
                 .size = @sizeOf(GravityShader.PushConstant),
                 .pValues = &self.gravity_shader.push_constant
             },
-            .dispatch_size = .{ 1, 1, 1 }
+            .dispatch_size = .{ @intCast(self.state.objects.len), 1, 1 }
         };
         var gravity_pass = render.RenderPass.init(self.allocator, &compute_gravity, gravity_pass_ctx);
         try gravity_pass.addBuffer(compute_object_resource);
@@ -128,10 +137,12 @@ pub const GravityScene = struct {
                 .shader_storage_read_bit = true,
             },
             .stage = .{
-                .fragment_shader_bit = true
+                .vertex_shader_bit = true
             }
         };
 
+        self.render_shader.push_constant.world_size = @floatFromInt(self.state.world_size);
+        self.render_shader.push_constant.camera_pos = @splat(0); // UPDATE camera with mouse
         const render_ctx = render.Context {
             .pipeline = &self.render_shader.pipeline,
             .descriptor_sets = &self.render_shader.bound_descriptor_sets,
@@ -141,7 +152,17 @@ pub const GravityScene = struct {
                 .width = draw_resource.color_image.extent.width,
                 .height = draw_resource.color_image.extent.height,
             },
-            .vertex_count = 3,
+            .vertex_count = 6,
+            .instance_count = @intCast(self.state.objects.len),
+            .push_constant = vk.PushConstantsInfo {
+                .sType = .push_constants_info,
+                .layout = self.render_shader.pipeline.layout,
+                .stageFlags = .{
+                    .vertex_bit = true
+                },
+                .size = @sizeOf(RenderShader.PushConstant),
+                .pValues = &self.render_shader.push_constant
+            },
         };
         var render_pass = render.RenderPass.init(self.allocator, &render_objects, render_ctx);
         try render_pass.addImage(render_resource);
@@ -157,8 +178,10 @@ pub const GravityScene = struct {
     }
 
     const State = struct {
-        object: Object,
-        delta_time: f32
+        objects: []const Object,
+        delta_time: f32,
+        world_size: @Vector(2, u32),
+        camera_pos: @Vector(2, u32)
     };
 };
 
@@ -221,7 +244,8 @@ fn render_objects(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
 
     vk.cmdBindPipeline(cmd, .graphics, ctx.pipeline.handle);
     vk.cmdBindDescriptorSets(cmd, .graphics, ctx.pipeline.layout, 0, @intCast(ctx.descriptor_sets.len), ctx.descriptor_sets.ptr, 0, null);
-    vk.cmdDraw(cmd, ctx.vertex_count, 1, 0, 0);
+    vk.cmdPushConstants2(cmd, &ctx.push_constant);
+    vk.cmdDraw(cmd, ctx.vertex_count, ctx.instance_count, 0, 0);
 
     vk.cmdEndRendering(cmd);
 }
@@ -333,6 +357,7 @@ const RenderShader = struct {
     writer: descriptors.Writer,
 
     bound_descriptor_sets: [1]vk.DescriptorSet = .{ .null_handle },
+    push_constant: PushConstant,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !RenderShader {
         // create layout
@@ -340,7 +365,7 @@ const RenderShader = struct {
         defer layout_builder.deinit();
 
         const shader_stages: vk.ShaderStageFlags = .{
-            .fragment_bit = true
+            .vertex_bit = true
         };
         try layout_builder.addBinding(0, .storage_buffer, shader_stages);
 
@@ -366,7 +391,16 @@ const RenderShader = struct {
         const fragment_module = try shaders.load_shader_module(io, allocator, fragment_path, device);
         defer vk.destroyShaderModule(device, fragment_module, null);
 
+        const push_constant_range = vk.PushConstantRange {
+            .size = @sizeOf(PushConstant),
+            .offset = 0,
+            .stageFlags = .{
+                .vertex_bit = true
+            }
+        };
+
         var pipeline = try shaders.Pipeline.init(device, descriptor_set_layouts);
+        try pipeline.addPushConstant(allocator, push_constant_range);
         try pipeline.buildGraphics(device, vertex_module, fragment_module, .r16g16b16a16_sfloat);
 
         return .{
@@ -375,6 +409,10 @@ const RenderShader = struct {
             .layouts = descriptor_set_layouts,
             .pipeline = pipeline,
             .writer = descriptors.Writer.init(allocator),
+            .push_constant = .{
+                .world_size = @splat(0),
+                .camera_pos = @splat(0)
+            }
         };
     }
 
@@ -403,6 +441,11 @@ const RenderShader = struct {
         object_buffer: vk.Buffer,
         object_offset: u32,
         descriptor_set: vk.DescriptorSet
+    };
+
+    pub const PushConstant = struct {
+        world_size: @Vector(2, f32),
+        camera_pos: @Vector(2, f32)
     };
 };
 

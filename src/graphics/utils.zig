@@ -42,6 +42,16 @@ pub fn upload_data(comptime T: type, vma: c.VmaAllocator, allocation: c.VmaAlloc
     c.vmaUnmapMemory(vma, allocation);
 }
 
+pub fn upload_data_array(comptime T: type, vma: c.VmaAllocator, allocation: c.VmaAllocation, data: []const T) !void {
+	var ptr: []T = undefined;
+    vk_interop.vmaMapMemory(vma, allocation, @ptrCast(&ptr)) catch |err| {
+		std.log.err("failed to map memory. error : {any}", .{err});
+		return err;
+	};
+	@memcpy(ptr[0..data.len], data);
+    c.vmaUnmapMemory(vma, allocation);
+}
+
 const std = @import("std");
 const c = @import("c");
 const vk = @import("vk");
