@@ -1,7 +1,7 @@
-
 struct Object
 {
     float2 pos;
+    float mass;
 }
 
 [push_constant]

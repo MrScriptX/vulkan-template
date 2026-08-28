@@ -16,6 +16,7 @@ pub const GravityScene = struct {
         const initial_state = State {
             .object = .{
                 .pos = .{ 0, 0 },
+                .mass = 1
             },
             .delta_time = 0
         };
@@ -61,6 +62,9 @@ pub const GravityScene = struct {
     }
 
     pub fn update(self: *GravityScene, dt: i96, draw_resource: *const render.DrawResource) !void {
+        // update scene
+
+        
         // update scene data
         const shader_data = GravityShader.Data {
             .object_buffer = self.buffer.handle,
@@ -223,7 +227,8 @@ fn render_objects(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
 }
 
 const Object = struct {
-    pos: @Vector(2, f32)
+    pos: @Vector(2, f32),
+    mass: f32
 };
 
 const GravityShader = struct {
