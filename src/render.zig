@@ -250,7 +250,7 @@ pub const ImageResource = struct {
 
 pub const Context = struct {
     pipeline: *const shaders.Pipeline,
-    descriptor_sets: []vk.DescriptorSet,
+    descriptor_sets: []const vk.DescriptorSet,
     dispatch_size: [3]u32,
 };
 

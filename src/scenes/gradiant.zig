@@ -4,10 +4,8 @@ pub const GradiantScene = struct {
     state: State,
     render_graph: render.RenderGraph,
 
-    descriptor_allocator: allocators.Descriptor,
-    descriptor_sets: []vk.DescriptorSet,
-
-    pipeline: shaders.Pipeline,
+    gradiant_shader: GradiantShader,
+    da: allocators.Descriptor,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !GradiantScene {
         // create descriptor allocator
@@ -20,71 +18,31 @@ pub const GradiantScene = struct {
         };
         errdefer da.deinit(device);
 
-        // create descriptor layout
-        var layout_builder = descriptors.LayoutBuilder.init(allocator);
-        defer layout_builder.deinit();
-        
-        const shader_stages: vk.ShaderStageFlags = .{
-            .compute_bit = true
-        };
-        try layout_builder.addBinding(0, .storage_image, shader_stages);
-
-        const descriptor_set_layout = try layout_builder.build(device, .{});
-        errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layout, null);
-
-        const descriptor_set_layouts = try allocator.alloc(vk.DescriptorSetLayout, 1);
-        errdefer allocator.free(descriptor_set_layouts);
-
-        descriptor_set_layouts[0] = descriptor_set_layout;
-
-        // create pipeline
-        var pipeline = try shaders.Pipeline.init(device, descriptor_set_layouts);
-
-        const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
-        defer allocator.free(exe_dir);
-
-        const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gradiant.spirv", .{ exe_dir });
-        defer allocator.free(shader_path);
-
-        const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
-        defer vk.destroyShaderModule(device, shader_module, null);
-        
-        try pipeline.buildCompute(device, shader_module);
-
-        // allocate descriptor set
-        const descriptor_set = try da.allocate(descriptor_set_layout);
-
-        const descriptor_sets = allocator.alloc(vk.DescriptorSet, 1) catch {
-            std.log.err("failed to allocate descriptor sets.", .{});
-            return Error.initialization_failed;
-        };
-        descriptor_sets[0] = descriptor_set;
-
         return .{
             .allocator = allocator,
 
             .state = .{},
             .render_graph = render.RenderGraph.init(allocator),
+            .da = da,
 
-            .pipeline = pipeline,
-            .descriptor_allocator = da,
-            .descriptor_sets = descriptor_sets
+            .gradiant_shader = try GradiantShader.init(allocator, io, device),
         };
     }
 
-    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, device: vk.Device, draw_resource: *const render.DrawResource) !void {
+    pub fn update(self: *GradiantScene, allocator: std.mem.Allocator, draw_resource: *const render.DrawResource) !void {
         self.render_graph.clear();
+
+        const shader_data = GradiantShader.Data {
+            .draw_image = draw_resource.color_image,
+            .descriptor_set = try self.da.allocate(self.gradiant_shader.layouts[0])
+        };
 
         // check if needs update
         if (draw_resource.color_image.extent.width != self.state.x_view or  draw_resource.color_image.extent.height != self.state.y_view) {
             self.state.x_view = draw_resource.color_image.extent.width;
             self.state.y_view = draw_resource.color_image.extent.height;
 
-            var descriptor_writer = descriptors.Writer.init(allocator);
-            defer descriptor_writer.deinit();
-
-            try descriptor_writer.addImage(0, draw_resource.color_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
-            descriptor_writer.write(device, self.descriptor_sets[0]);
+            self.gradiant_shader.write(shader_data);
         }
 
         // prepare render graph
@@ -100,8 +58,8 @@ pub const GradiantScene = struct {
 
         // create draw grandiant pass
         const ctx = render.Context {
-            .pipeline = &self.pipeline,
-            .descriptor_sets = self.descriptor_sets,
+            .pipeline = &self.gradiant_shader.pipeline,
+            .descriptor_sets = &.{ shader_data.descriptor_set },
             .dispatch_size = .{
                 draw_resource.color_image.extent.width / 16,
                 draw_resource.color_image.extent.height / 16,
@@ -144,12 +102,8 @@ pub const GradiantScene = struct {
     }
 
     pub fn deinit(self: *GradiantScene, device: vk.Device) void {
-        self.allocator.free(self.descriptor_sets);
-
-        self.pipeline.deinit(self.allocator);
-
-        self.descriptor_allocator.deinit(device);
-        
+        self.gradiant_shader.deinit();
+        self.da.deinit(device);
         self.render_graph.deinit();
     }
 
@@ -173,6 +127,78 @@ fn render_gradiant(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
 fn render_color(_: vk.CommandBuffer, _: *const render.Context) void {
 
 }
+
+const GradiantShader = struct {
+    allocator: std.mem.Allocator,
+    device: vk.Device,
+    pipeline: shaders.Pipeline,
+    layouts: []vk.DescriptorSetLayout,
+    writer: descriptors.Writer,
+
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !GradiantShader {
+        // create descriptor layout
+        var layout_builder = descriptors.LayoutBuilder.init(allocator);
+        defer layout_builder.deinit();
+        
+        const shader_stages: vk.ShaderStageFlags = .{
+            .compute_bit = true
+        };
+        try layout_builder.addBinding(0, .storage_image, shader_stages);
+
+        const descriptor_set_layout = try layout_builder.build(device, .{});
+        errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layout, null);
+
+        const descriptor_set_layouts = try allocator.alloc(vk.DescriptorSetLayout, 1);
+        errdefer allocator.free(descriptor_set_layouts);
+
+        descriptor_set_layouts[0] = descriptor_set_layout;
+
+        // create pipeline
+        var pipeline = try shaders.Pipeline.init(device, descriptor_set_layouts);
+
+        const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
+        defer allocator.free(exe_dir);
+
+        const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gradiant.spirv", .{ exe_dir });
+        defer allocator.free(shader_path);
+
+        const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
+        defer vk.destroyShaderModule(device, shader_module, null);
+        
+        try pipeline.buildCompute(device, shader_module);
+
+        return .{
+            .allocator = allocator,
+            .device = device,
+            .pipeline = pipeline,
+            .layouts = descriptor_set_layouts,
+            .writer = descriptors.Writer.init(allocator),
+        };
+    }
+
+    pub fn write(self: *GradiantShader, data: Data) void {
+        self.writer.clear();
+        self.writer.addImage(0, data.draw_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image) catch {
+            std.log.warn("failed to write data.", .{});
+        };
+
+        self.writer.write(self.device, data.descriptor_set);
+    }
+
+    pub fn deinit(self: *GradiantShader) void {
+        for (self.layouts) |layout| {
+            vk.destroyDescriptorSetLayout(self.device, layout, null);
+        }
+        self.allocator.free(self.layouts);
+
+        self.pipeline.deinit(self.allocator);
+    }
+
+    pub const Data = struct {
+        draw_image: types.Image,
+        descriptor_set: vk.DescriptorSet
+    };
+};
 
 const std = @import("std");
 const vk = @import("vk");

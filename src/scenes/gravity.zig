@@ -185,6 +185,9 @@ const GravityShader = struct {
     }
 
     pub fn deinit(self: *GravityShader) void {
+        for (self.layouts) |layout| {
+            vk.destroyDescriptorSetLayout(self.device, layout, null);
+        }
         self.pipeline.deinit(self.allocator);
         self.writer.deinit();
     }
@@ -194,6 +197,10 @@ const GravityShader = struct {
         object_offset: u32,
         descriptor_set: vk.DescriptorSet
     };
+};
+
+const RenderShader = struct {
+
 };
 
 const std = @import("std");
