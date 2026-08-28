@@ -52,11 +52,12 @@ pub const GravityScene = struct {
         };
     }
 
-    pub fn deinit(self: *GravityScene, device: vk.Device) void {
+    pub fn deinit(self: *GravityScene, vma: c.VmaAllocator, device: vk.Device) void {
         self.da.deinit(device);
         self.render_graph.deinit();
         self.render_shader.deinit();
         self.gravity_shader.deinit();
+        self.buffer.deinit(vma);
     }
 
     pub fn update(self: *GravityScene, draw_resource: *const render.DrawResource) !void {
@@ -219,8 +220,6 @@ const GravityShader = struct {
     layouts: []vk.DescriptorSetLayout,
     writer: descriptors.Writer,
 
-    // owned by the shader (not the per-frame update() stack frame) so Context.descriptor_sets
-    // stays valid when the render graph is executed later, in a different call.
     bound_descriptor_sets: [1]vk.DescriptorSet = .{ .null_handle },
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !GravityShader {
@@ -273,8 +272,12 @@ const GravityShader = struct {
     }
 
     pub fn deinit(self: *GravityShader) void {
-        // self.pipeline.deinit already destroys self.layouts (same slice) and frees it.
-        self.pipeline.deinit(self.allocator);
+        for (self.layouts) |layout| {
+            vk.destroyDescriptorSetLayout(self.device, layout, null);
+        }
+        self.allocator.free(self.layouts);
+
+        self.pipeline.deinit();
         self.writer.deinit();
     }
 
@@ -293,8 +296,6 @@ const RenderShader = struct {
     layouts: []vk.DescriptorSetLayout,
     writer: descriptors.Writer,
 
-    // owned by the shader (not the per-frame update() stack frame) so Context.descriptor_sets
-    // stays valid when the render graph is executed later, in a different call.
     bound_descriptor_sets: [1]vk.DescriptorSet = .{ .null_handle },
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !RenderShader {
@@ -353,8 +354,12 @@ const RenderShader = struct {
     }
 
     pub fn deinit(self: *RenderShader) void {
-        // self.pipeline.deinit already destroys self.layouts (same slice) and frees it.
-        self.pipeline.deinit(self.allocator);
+        for (self.layouts) |layout| {
+            vk.destroyDescriptorSetLayout(self.device, layout, null);
+        }
+        self.allocator.free(self.layouts);
+
+        self.pipeline.deinit();
         self.writer.deinit();
     }
 

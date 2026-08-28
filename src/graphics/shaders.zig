@@ -169,14 +169,9 @@ pub const Pipeline = struct {
         };
     }
 
-    pub fn deinit(self: *Pipeline, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Pipeline) void {
         vk.destroyPipeline(self.device, self.handle, null);
         vk.destroyPipelineLayout(self.device, self.layout, null);
-
-        for (self.descriptor_set_layouts) |layout| {
-            vk.destroyDescriptorSetLayout(self.device, layout, null);
-        }
-        allocator.free(self.descriptor_set_layouts);
     }
 };
 

@@ -96,7 +96,7 @@ const Engine = struct {
     pub fn deinit(self: *Engine) void {
         self.renderer.stop();
 
-        self.gravity_scene.deinit(self.renderer.device);
+        self.gravity_scene.deinit(self.renderer.vma, self.renderer.device);
         self.gradiant_scene.deinit(self.renderer.device);
     }
 };
