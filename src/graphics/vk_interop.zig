@@ -54,10 +54,15 @@ pub fn vmaCreateBuffer(
     p_buffer: *c.VkBuffer,
     p_allocation: *c.VmaAllocation,
     p_allocation_info: ?*c.VmaAllocationInfo,
-    ) vk.Error!void {
+) vk.Error!void {
     try vk.check_result(@enumFromInt(c.vmaCreateBuffer(
         allocator, p_buffer_create_info, p_alloc_create_info, p_buffer, p_allocation, p_allocation_info
     )));
+}
+
+pub fn vmaMapMemory(allocator: c.VmaAllocator, allocation: c.VmaAllocation, pp_data: [*c]?*anyopaque) vk.Error!void {
+    const result = c.vmaMapMemory(allocator, allocation, pp_data);
+    try vk.check_result(@enumFromInt(result));
 }
 
 const c = @import("c");

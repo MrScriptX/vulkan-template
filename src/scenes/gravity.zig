@@ -26,6 +26,9 @@ pub const GravityScene = struct {
 
         const buffer = try types.Buffer.init(vma, @sizeOf(Object), buffer_usage, c.VMA_MEMORY_USAGE_AUTO);
 
+        // upload intial state
+        try utils.upload_data(Object, vma, buffer.allocation, &initial_state.object);
+
         const gravity_shader = try GravityShader.init(allocator, io, device);
 
         // material
@@ -60,6 +63,9 @@ pub const GravityScene = struct {
             .descriptor_set = try self.da.allocate(self.gravity_shader.layouts[0])
         };
         self.gravity_shader.write(shader_data);
+
+        // TODO : add delta time as push constant
+        // TODO : test upload position with a render of the object
 
         // build render graph
         self.render_graph.clear();
@@ -193,6 +199,7 @@ const GravityShader = struct {
 const std = @import("std");
 const vk = @import("vk");
 const c = @import("c");
+const utils = @import("../graphics/utils.zig");
 const render = @import("../render.zig");
 const shaders = @import("../graphics/shaders.zig");
 const descriptors = @import("../graphics/descriptors.zig");

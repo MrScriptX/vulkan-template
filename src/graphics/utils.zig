@@ -32,5 +32,17 @@ pub fn transition_image_layout(cmd: vk.CommandBuffer, image: vk.Image, current_l
     vk.cmdPipelineBarrier2(cmd, &dep_info);
 }
 
+pub fn upload_data(comptime T: type, vma: c.VmaAllocator, allocation: c.VmaAllocation, data: *const T) !void {
+	var ptr: *T = undefined;
+    vk_interop.vmaMapMemory(vma, allocation, @ptrCast(&ptr)) catch |err| {
+		std.log.err("failed to map memory. error : {any}", .{err});
+		return err;
+	};
+    ptr.* = data.*;
+    c.vmaUnmapMemory(vma, allocation);
+}
+
+const std = @import("std");
 const c = @import("c");
 const vk = @import("vk");
+const vk_interop = @import("vk_interop.zig");
