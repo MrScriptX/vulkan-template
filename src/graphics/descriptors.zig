@@ -84,8 +84,13 @@ pub const Writer = struct {
     }
 
     pub fn clear(self: *Writer) void {
+        for (self.buffers_info.items) |info| {
+            self.allocator.destroy(info);
+        }
+        self.buffers_info.clearRetainingCapacity();
+
         for (self.images_info.items) |info| {
-            self.allocator.free(info);
+            self.allocator.destroy(info);
         }
         self.images_info.clearRetainingCapacity();
     }
