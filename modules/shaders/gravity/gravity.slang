@@ -1,7 +1,7 @@
 
 struct Object
 {
-    int32_t2 pos;
+    float2 pos;
 }
 
 RWStructuredBuffer<Object> object;

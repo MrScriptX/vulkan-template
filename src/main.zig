@@ -87,8 +87,9 @@ const Engine = struct {
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
 
         try self.gradiant_scene.update(allocator, &self.renderer.draw_resource);
+        try self.gravity_scene.update(&self.renderer.draw_resource);
 
-        try self.renderer.draw(frame_index, &self.gradiant_scene);
+        try self.renderer.draw(frame_index, .{ &self.gradiant_scene, &self.gravity_scene });
         self.frame_count += 1;
     }
 

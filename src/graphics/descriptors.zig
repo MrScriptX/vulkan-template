@@ -93,6 +93,8 @@ pub const Writer = struct {
             self.allocator.destroy(info);
         }
         self.images_info.clearRetainingCapacity();
+
+        self.writes.clearRetainingCapacity();
     }
 
     pub fn addImage(self: *Writer, binding: u32, image_view: vk.ImageView, sampler: vk.Sampler, image_layout: vk.ImageLayout, kind: vk.DescriptorType) !void {
@@ -138,7 +140,7 @@ pub const Writer = struct {
             .range = range
         };
 
-        self.buffer_info.append(self.allocator, buffer_descriptor_info) catch |err| {
+        self.buffers_info.append(self.allocator, buffer_descriptor_info) catch |err| {
             std.log.err("failed to append descriptor set write. erro : {any}", .{err});
             return err;
         };

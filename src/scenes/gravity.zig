@@ -5,6 +5,7 @@ pub const GravityScene = struct {
     render_graph: render.RenderGraph,
 
     gravity_shader: GravityShader,
+    render_shader: RenderShader,
     buffer: types.Buffer,
 
     da: allocators.Descriptor,
@@ -30,6 +31,7 @@ pub const GravityScene = struct {
         try utils.upload_data(Object, vma, buffer.allocation, &initial_state.object);
 
         const gravity_shader = try GravityShader.init(allocator, io, device);
+        const render_shader = try RenderShader.init(allocator, io, device);
 
         // material
         const pool_sizes = [_]descriptors.PoolSizeRatio {
@@ -44,18 +46,20 @@ pub const GravityScene = struct {
             .state = initial_state,
             .render_graph = render_graph,
             .gravity_shader = gravity_shader,
+            .render_shader = render_shader,
             .buffer = buffer,
-            .da = try allocators.Descriptor.init(allocator, device, 1, &pool_sizes)
+            .da = try allocators.Descriptor.init(allocator, device, 2, &pool_sizes)
         };
     }
 
     pub fn deinit(self: *GravityScene, device: vk.Device) void {
         self.da.deinit(device);
         self.render_graph.deinit();
+        self.render_shader.deinit();
         self.gravity_shader.deinit();
     }
 
-    pub fn update(self: *GravityScene, draw_resource: *const render.DrawResource) void {
+    pub fn update(self: *GravityScene, draw_resource: *const render.DrawResource) !void {
         // update scene data
         const shader_data = GravityShader.Data {
             .object_buffer = self.buffer.handle,
@@ -64,13 +68,19 @@ pub const GravityScene = struct {
         };
         self.gravity_shader.write(shader_data);
 
+        const render_shader_data = RenderShader.Data {
+            .object_buffer = self.buffer.handle,
+            .object_offset = 0,
+            .descriptor_set = try self.da.allocate(self.render_shader.layouts[0])
+        };
+        self.render_shader.write(render_shader_data);
+
         // TODO : add delta time as push constant
-        // TODO : test upload position with a render of the object
 
         // build render graph
         self.render_graph.clear();
 
-        const object_resource = render.BufferResource {
+        const compute_object_resource = render.BufferResource {
             .buffer = &self.buffer,
             .access = .{
                 .shader_storage_read_bit = true,
@@ -84,27 +94,46 @@ pub const GravityScene = struct {
         // gravity compute pass
         const gravity_pass_ctx = render.Context {
             .pipeline = &self.gravity_shader.pipeline,
-            .descriptor_sets = .{ shader_data.descriptor_set },
+            .descriptor_sets = &self.gravity_shader.bound_descriptor_sets,
             .dispatch_size = .{ 1, 1, 1 }
         };
         var gravity_pass = render.RenderPass.init(self.allocator, &compute_gravity, gravity_pass_ctx);
-        try gravity_pass.addBuffer(object_resource);
+        try gravity_pass.addBuffer(compute_object_resource);
+        try self.render_graph.addPass(gravity_pass);
 
         // render pass
-        // const render_ctx = render.Context {
-        //     .pipeline = undefined,
-        //     .descriptor_sets = .{},
-        //     .dispatch_size = @splat(0)
-        // };
-
         const render_resource = render.ImageResource {
             .image = &draw_resource.color_image,
             .layout = .color_attachment_optimal
         };
-        // var render_pass = render.RenderPass.init(self.allocator, &render_objects, render_ctx);
-        // try render_pass.addImageBuffer(render_resource);
 
-        self.render_graph.setOutput(render_resource);
+        const render_object_resource = render.BufferResource {
+            .buffer = &self.buffer,
+            .access = .{
+                .shader_storage_read_bit = true,
+            },
+            .stage = .{
+                .fragment_shader_bit = true
+            }
+        };
+
+        const render_ctx = render.Context {
+            .pipeline = &self.render_shader.pipeline,
+            .descriptor_sets = &self.render_shader.bound_descriptor_sets,
+            .dispatch_size = .{ 0, 0, 0 },
+            .color_view = draw_resource.color_image.image_view,
+            .extent = .{
+                .width = draw_resource.color_image.extent.width,
+                .height = draw_resource.color_image.extent.height,
+            },
+            .vertex_count = 3,
+        };
+        var render_pass = render.RenderPass.init(self.allocator, &render_objects, render_ctx);
+        try render_pass.addImage(render_resource);
+        try render_pass.addBuffer(render_object_resource);
+        try self.render_graph.addPass(render_pass);
+
+        try self.render_graph.setOutput(render_resource);
     }
 
     pub fn draw(self: *GravityScene, cmd: vk.CommandBuffer) void {
@@ -123,8 +152,59 @@ fn compute_gravity(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
     vk.cmdDispatch(cmd, ctx.dispatch_size[0], ctx.dispatch_size[1], ctx.dispatch_size[2]);
 }
 
-fn render_objects(_: vk.CommandBuffer, _: *const render.Context) void {
+fn render_objects(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
+    const color_attachment = vk.RenderingAttachmentInfo {
+        .sType = .rendering_attachment_info,
+        .imageView = ctx.color_view,
+        .imageLayout = .color_attachment_optimal,
+        .resolveMode = .{},
+        .resolveImageView = .null_handle,
+        .resolveImageLayout = .@"undefined",
+        .loadOp = .load,
+        .storeOp = .store,
+        .clearValue = std.mem.zeroes(vk.ClearValue),
+    };
 
+    const color_attachments = [_]vk.RenderingAttachmentInfo { color_attachment };
+    const rendering_info = vk.RenderingInfo {
+        .sType = .rendering_info,
+        .renderArea = .{
+            .offset = .{ .x = 0, .y = 0 },
+            .extent = ctx.extent,
+        },
+        .layerCount = 1,
+        .viewMask = 0,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &color_attachments,
+        .pDepthAttachment = null,
+        .pStencilAttachment = null,
+    };
+
+    vk.cmdBeginRendering(cmd, &rendering_info);
+
+    const viewport = vk.Viewport {
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(ctx.extent.width),
+        .height = @floatFromInt(ctx.extent.height),
+        .minDepth = 0,
+        .maxDepth = 1,
+    };
+    const viewports = [_]vk.Viewport { viewport };
+    vk.cmdSetViewport(cmd, 0, 1, &viewports);
+
+    const scissor = vk.Rect2D {
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = ctx.extent,
+    };
+    const scissors = [_]vk.Rect2D { scissor };
+    vk.cmdSetScissor(cmd, 0, 1, &scissors);
+
+    vk.cmdBindPipeline(cmd, .graphics, ctx.pipeline.handle);
+    vk.cmdBindDescriptorSets(cmd, .graphics, ctx.pipeline.layout, 0, @intCast(ctx.descriptor_sets.len), ctx.descriptor_sets.ptr, 0, null);
+    vk.cmdDraw(cmd, ctx.vertex_count, 1, 0, 0);
+
+    vk.cmdEndRendering(cmd);
 }
 
 const Object = struct {
@@ -138,6 +218,10 @@ const GravityShader = struct {
     pipeline: shaders.Pipeline,
     layouts: []vk.DescriptorSetLayout,
     writer: descriptors.Writer,
+
+    // owned by the shader (not the per-frame update() stack frame) so Context.descriptor_sets
+    // stays valid when the render graph is executed later, in a different call.
+    bound_descriptor_sets: [1]vk.DescriptorSet = .{ .null_handle },
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !GravityShader {
         // create layout
@@ -178,16 +262,18 @@ const GravityShader = struct {
     }
 
     pub fn write(self: *GravityShader, data: Data) void {
+        self.bound_descriptor_sets[0] = data.descriptor_set;
+
         self.writer.clear();
-        self.writer.addBuffer(0, data.object_buffer, data.object_offset, @sizeOf(Object), .storage_buffer);
+        self.writer.addBuffer(0, data.object_buffer, data.object_offset, @sizeOf(Object), .storage_buffer) catch {
+            std.log.warn("failed to write data.", .{});
+        };
 
         self.writer.write(self.device, data.descriptor_set);
     }
 
     pub fn deinit(self: *GravityShader) void {
-        for (self.layouts) |layout| {
-            vk.destroyDescriptorSetLayout(self.device, layout, null);
-        }
+        // self.pipeline.deinit already destroys self.layouts (same slice) and frees it.
         self.pipeline.deinit(self.allocator);
         self.writer.deinit();
     }
@@ -200,7 +286,83 @@ const GravityShader = struct {
 };
 
 const RenderShader = struct {
+    allocator: std.mem.Allocator,
 
+    device: vk.Device,
+    pipeline: shaders.Pipeline,
+    layouts: []vk.DescriptorSetLayout,
+    writer: descriptors.Writer,
+
+    // owned by the shader (not the per-frame update() stack frame) so Context.descriptor_sets
+    // stays valid when the render graph is executed later, in a different call.
+    bound_descriptor_sets: [1]vk.DescriptorSet = .{ .null_handle },
+
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !RenderShader {
+        // create layout
+        var layout_builder = descriptors.LayoutBuilder.init(allocator);
+        defer layout_builder.deinit();
+
+        const shader_stages: vk.ShaderStageFlags = .{
+            .fragment_bit = true
+        };
+        try layout_builder.addBinding(0, .storage_buffer, shader_stages);
+
+        const descriptor_set_layouts = try allocator.alloc(vk.DescriptorSetLayout, 1);
+        errdefer allocator.free(descriptor_set_layouts);
+
+        descriptor_set_layouts[0] = try layout_builder.build(device, .{});
+        errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layouts[0], null);
+
+        // create pipeline
+        const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
+        defer allocator.free(exe_dir);
+
+        const vertex_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gravity/vertex.spirv", .{ exe_dir });
+        defer allocator.free(vertex_path);
+
+        const fragment_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gravity/fragment.spirv", .{ exe_dir });
+        defer allocator.free(fragment_path);
+
+        const vertex_module = try shaders.load_shader_module(io, allocator, vertex_path, device);
+        defer vk.destroyShaderModule(device, vertex_module, null);
+
+        const fragment_module = try shaders.load_shader_module(io, allocator, fragment_path, device);
+        defer vk.destroyShaderModule(device, fragment_module, null);
+
+        var pipeline = try shaders.Pipeline.init(device, descriptor_set_layouts);
+        try pipeline.buildGraphics(device, vertex_module, fragment_module, .r16g16b16a16_sfloat);
+
+        return .{
+            .allocator = allocator,
+            .device = device,
+            .layouts = descriptor_set_layouts,
+            .pipeline = pipeline,
+            .writer = descriptors.Writer.init(allocator),
+        };
+    }
+
+    pub fn write(self: *RenderShader, data: Data) void {
+        self.bound_descriptor_sets[0] = data.descriptor_set;
+
+        self.writer.clear();
+        self.writer.addBuffer(0, data.object_buffer, data.object_offset, @sizeOf(Object), .storage_buffer) catch {
+            std.log.warn("failed to write data.", .{});
+        };
+
+        self.writer.write(self.device, data.descriptor_set);
+    }
+
+    pub fn deinit(self: *RenderShader) void {
+        // self.pipeline.deinit already destroys self.layouts (same slice) and frees it.
+        self.pipeline.deinit(self.allocator);
+        self.writer.deinit();
+    }
+
+    pub const Data = struct {
+        object_buffer: vk.Buffer,
+        object_offset: u32,
+        descriptor_set: vk.DescriptorSet
+    };
 };
 
 const std = @import("std");

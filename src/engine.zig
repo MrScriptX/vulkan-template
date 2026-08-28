@@ -471,7 +471,7 @@ pub const Renderer = struct {
         };
     }
 
-    pub fn draw(self: *const Renderer, frame_index: u32, scene: *gradiant.GradiantScene) !void {
+    pub fn draw(self: *const Renderer, frame_index: u32, scenes: anytype) !void {
         const frame = &self.frames[frame_index];
 
         vk.waitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, std.math.maxInt(u64)) catch |err| {
@@ -496,7 +496,9 @@ pub const Renderer = struct {
             return Error.SkipImage;
         };
 
-        scene.draw(cmd);
+        inline for (scenes) |scene| {
+            scene.draw(cmd);
+        }
 
         // copy draw image to swapchain image
         utils.transition_image_layout(cmd, self.swapchain.images[image_index], .@"undefined", .transfer_dst_optimal);
@@ -937,8 +939,14 @@ fn create_device(allocator: std.mem.Allocator, physical_device: vk.PhysicalDevic
         .fillModeNonSolid = c.VK_TRUE,
     };
 
+    const features_vulkan11 = vk.PhysicalDeviceVulkan11Features {
+        .sType = .physical_device_vulkan_1_1_features,
+        .shaderDrawParameters = c.VK_TRUE,
+    };
+
     const features_vulkan12 = vk.PhysicalDeviceVulkan12Features {
         .sType = .physical_device_vulkan_1_2_features,
+        .pNext = @constCast(@ptrCast(&features_vulkan11)),
         .bufferDeviceAddress = c.VK_TRUE,
     };
 
@@ -946,6 +954,7 @@ fn create_device(allocator: std.mem.Allocator, physical_device: vk.PhysicalDevic
         .sType = .physical_device_vulkan_1_3_features,
         .pNext = @constCast(@ptrCast(&features_vulkan12)),
         .synchronization2 = if (extensions.VK_KHR_synchronization2) c.VK_TRUE else c.VK_FALSE,
+        .dynamicRendering = c.VK_TRUE,
     };
 
     // layers
@@ -1125,6 +1134,5 @@ const allocators = @import("graphics/allocators.zig");
 const descriptors = @import("graphics/descriptors.zig");
 const shaders = @import("graphics/shaders.zig");
 const types = @import("graphics/types.zig");
-const gradiant = @import("scenes/gradiant.zig");
 const utils = @import("graphics/utils.zig");
 const render = @import("render.zig");

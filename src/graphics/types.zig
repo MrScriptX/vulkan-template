@@ -81,7 +81,7 @@ pub const Buffer = struct {
 
         const allocation_create_info = c.VmaAllocationCreateInfo {
             .usage = mem_usage,
-            .flags = c.VMA_ALLOCATION_CREATE_MAPPED_BIT
+            .flags = c.VMA_ALLOCATION_CREATE_MAPPED_BIT | c.VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
         };
 
         var cbuffer: c.VkBuffer = undefined;

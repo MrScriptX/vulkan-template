@@ -59,7 +59,7 @@ pub const GradiantScene = struct {
         // create draw grandiant pass
         const ctx = render.Context {
             .pipeline = &self.gradiant_shader.pipeline,
-            .descriptor_sets = &.{ shader_data.descriptor_set },
+            .descriptor_sets = &self.gradiant_shader.bound_descriptor_sets,
             .dispatch_size = .{
                 draw_resource.color_image.extent.width / 16,
                 draw_resource.color_image.extent.height / 16,
@@ -135,6 +135,10 @@ const GradiantShader = struct {
     layouts: []vk.DescriptorSetLayout,
     writer: descriptors.Writer,
 
+    // owned by the shader (not the per-frame update() stack frame) so Context.descriptor_sets
+    // stays valid when the render graph is executed later, in a different call.
+    bound_descriptor_sets: [1]vk.DescriptorSet = .{ .null_handle },
+
     pub fn init(allocator: std.mem.Allocator, io: std.Io, device: vk.Device) !GradiantShader {
         // create descriptor layout
         var layout_builder = descriptors.LayoutBuilder.init(allocator);
@@ -177,6 +181,8 @@ const GradiantShader = struct {
     }
 
     pub fn write(self: *GradiantShader, data: Data) void {
+        self.bound_descriptor_sets[0] = data.descriptor_set;
+
         self.writer.clear();
         self.writer.addImage(0, data.draw_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image) catch {
             std.log.warn("failed to write data.", .{});

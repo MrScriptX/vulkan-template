@@ -131,7 +131,7 @@ pub const RenderGraph = struct {
                     
                     .buffer = res.buffer.handle,
                     .offset = 0,
-                    .size = 0,
+                    .size = vk_whole_size,
                 };
 
                 barriers.append(self.allocator, barrier) catch {
@@ -252,6 +252,11 @@ pub const Context = struct {
     pipeline: *const shaders.Pipeline,
     descriptor_sets: []const vk.DescriptorSet,
     dispatch_size: [3]u32,
+
+    // graphics draw parameters (unused by compute passes)
+    color_view: vk.ImageView = .null_handle,
+    extent: vk.Extent2D = .{ .width = 0, .height = 0 },
+    vertex_count: u32 = 0,
 };
 
 pub const FnRender = *const fn(cmd: vk.CommandBuffer, ctx: *const Context) void;
@@ -296,6 +301,8 @@ pub const DrawResource = struct {
         self.depth_image.deinit(device, vma);
     }
 };
+
+const vk_whole_size: u64 = ~@as(u64, 0);
 
 const std = @import("std");
 const c = @import("c");
