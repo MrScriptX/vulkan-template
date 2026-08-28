@@ -21,8 +21,8 @@ pub const GravityScene = struct {
                     .mass = 1
                 },
                 .{
-                    .pos = .{ 0, 0 },
-                    .mass = 1
+                    .pos = .{ 0, 0.5 },
+                    .mass = 1 
                 }
             },
             .delta_time = 0,
@@ -251,7 +251,9 @@ fn render_objects(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
 }
 
 const Object = struct {
+    /// Position in km
     pos: @Vector(2, f32),
+    /// Mass in kg
     mass: f32
 };
 
