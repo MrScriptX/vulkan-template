@@ -159,7 +159,7 @@ const GravityShader = struct {
         const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
         defer allocator.free(exe_dir);
 
-        const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gravity.spirv", .{ exe_dir });
+        const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gravity/gravity.spirv", .{ exe_dir });
         defer allocator.free(shader_path);
 
         const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
