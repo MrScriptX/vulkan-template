@@ -137,7 +137,8 @@ pub const GravityScene = struct {
         try self.render_graph.setOutput(render_resource);
     }
 
-    pub fn draw(self: *GravityScene, cmd: vk.CommandBuffer) void {
+    pub fn draw(ptr: *anyopaque, cmd: vk.CommandBuffer) void {
+        const self: *GravityScene = @ptrCast(@alignCast(ptr));
         self.render_graph.exec(cmd);
     }
 

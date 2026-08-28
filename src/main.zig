@@ -31,7 +31,7 @@ pub fn main(proc: std.process.Init) !void {
         std.log.err("failed to init engine", .{});
         return e;
     };
-    defer app.deinit();
+    defer app.deinit(allocator);
 
     var quit = false;
     while (!quit) {
@@ -42,7 +42,7 @@ pub fn main(proc: std.process.Init) !void {
             }
         }
 
-        app.draw(allocator) catch |err| {
+        app.draw() catch |err| {
             switch (err) {
                 engine.Error.SkipImage => {
                     std.log.warn("Skipping image...", .{});
@@ -70,33 +70,40 @@ const Engine = struct {
     renderer: *const engine.Renderer,
     
     gradiant_scene: scenes.GradiantScene,
-    gravity_scene: gravity.GravityScene,
+    gravity_scene: *gravity.GravityScene,
+
+    live_scene: engine.Scene,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, renderer: *const engine.Renderer) !Engine {
         const gradiant_scene = try scenes.GradiantScene.init(allocator, io, renderer.device);
-        const gravity_scene = try gravity.GravityScene.init(allocator, io, renderer.device, renderer.vma);
+        
+        const gravity_scene = try allocator.create(gravity.GravityScene);
+        gravity_scene.* = try gravity.GravityScene.init(allocator, io, renderer.device, renderer.vma);
 
         return .{
             .renderer = renderer,
             .gradiant_scene = gradiant_scene,
-            .gravity_scene = gravity_scene
+            .gravity_scene = gravity_scene,
+            .live_scene = engine.Scene.interface(gravity.GravityScene, gravity_scene)
         };
     }
 
-    pub fn draw(self: *Engine, allocator: std.mem.Allocator) !void {
+    pub fn draw(self: *Engine) !void {
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
 
-        try self.gradiant_scene.update(allocator, &self.renderer.draw_resource);
+        // try self.gradiant_scene.update(allocator, &self.renderer.draw_resource);
         try self.gravity_scene.update(&self.renderer.draw_resource);
 
-        try self.renderer.draw(frame_index, .{ &self.gradiant_scene, &self.gravity_scene });
+        try self.renderer.draw(frame_index, &self.live_scene);
         self.frame_count += 1;
     }
 
-    pub fn deinit(self: *Engine) void {
+    pub fn deinit(self: *Engine, allocator: std.mem.Allocator) void {
         self.renderer.stop();
 
         self.gravity_scene.deinit(self.renderer.vma, self.renderer.device);
+        allocator.destroy(self.gravity_scene);
+
         self.gradiant_scene.deinit(self.renderer.device);
     }
 };

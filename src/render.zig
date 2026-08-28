@@ -251,9 +251,11 @@ pub const ImageResource = struct {
 pub const Context = struct {
     pipeline: *const shaders.Pipeline,
     descriptor_sets: []const vk.DescriptorSet,
+
+    // compute parameters
     dispatch_size: [3]u32,
 
-    // graphics draw parameters (unused by compute passes)
+    // graphics draw parameters
     color_view: vk.ImageView = .null_handle,
     extent: vk.Extent2D = .{ .width = 0, .height = 0 },
     vertex_count: u32 = 0,

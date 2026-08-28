@@ -240,7 +240,7 @@ const Swapchain = struct {
                 sw_mode = mode;
                 break;
             }
-            else if (mode == .immediate) { // segond meilleur si disponible
+            else if (mode == .immediate) { // second meilleur si disponible
                 sw_mode = mode;
             }
         }
@@ -347,8 +347,6 @@ pub const Renderer = struct {
     frames: []Frame,
 
     draw_resource: render.DrawResource,
-    // render_image: types.Image, // image use to record scene command
-    // depth_image: types.Image,
 
     pub fn init(allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
@@ -407,24 +405,6 @@ pub const Renderer = struct {
         const draw_resource = try render.DrawResource.init(vma, device, window_extent.width, window_extent.height);
         errdefer draw_resource.deinit(vma, device);
 
-        // create the render images
-        // const render_extent = vk.Extent3D {
-        //     .width = swapchain.extent.width,
-        //     .height = swapchain.extent.height,
-        //     .depth = 1
-        // };
-
-        // const render_image_usage: vk.ImageUsageFlags = .{ .transfer_src_bit = true, .storage_bit = true, .color_attachment_bit = true };
-
-        // const render_image = types.Image.init(vma, device, .r16g16b16a16_sfloat, render_extent, render_image_usage, .{ .color_bit = true }) catch |err| {
-        //     std.log.err("failed to create render image", .{});
-        //     return err;
-        // };
-        // errdefer render_image.deinit(device, vma);
-
-        // const depth_image = try types.Image.init(vma, device, .d32_sfloat, render_extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
-        // errdefer depth_image.deinit(device, vma);
-
         return .{
             .instance = instance,
             .surface = surface,
@@ -439,16 +419,12 @@ pub const Renderer = struct {
 
             .frames = frames,
             .draw_resource = draw_resource
-            // .render_image = render_image,
-            // .depth_image = depth_image,
         };
     }
 
     pub fn deinit(self: *Renderer, allocator: std.mem.Allocator) void {
         self.stop();
 
-        // self.depth_image.deinit(self.device, self.vma);
-        // self.render_image.deinit(self.device, self.vma);
         self.draw_resource.deinit(self.vma, self.device);
 
         for (0..self.frames.len) |i| {
@@ -471,7 +447,7 @@ pub const Renderer = struct {
         };
     }
 
-    pub fn draw(self: *const Renderer, frame_index: u32, scenes: anytype) !void {
+    pub fn draw(self: *const Renderer, frame_index: u32, scene: *const Scene) !void {
         const frame = &self.frames[frame_index];
 
         vk.waitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, std.math.maxInt(u64)) catch |err| {
@@ -496,9 +472,7 @@ pub const Renderer = struct {
             return Error.SkipImage;
         };
 
-        inline for (scenes) |scene| {
-            scene.draw(cmd);
-        }
+        scene.draw(cmd);
 
         // copy draw image to swapchain image
         utils.transition_image_layout(cmd, self.swapchain.images[image_index], .@"undefined", .transfer_dst_optimal);
@@ -631,8 +605,6 @@ pub const Renderer = struct {
     pub fn rebuild_swapchain(self: *Renderer, allocator: std.mem.Allocator, window: *c.SDL_Window) !void {
         self.stop();
 
-        // self.depth_image.deinit(self.device, self.vma);
-        // self.render_image.deinit(self.device, self.vma);
         self.draw_resource.deinit(self.vma, self.device);
         
         // clean up swapchain & resources
@@ -644,6 +616,24 @@ pub const Renderer = struct {
         errdefer self.swapchain.deinit(self.device);
 
         self.draw_resource = try render.DrawResource.init(self.vma, self.device, window_extent.width, window_extent.height);
+    }
+};
+
+/// Generic interface to pass a scene to the renderer
+pub const Scene = struct {
+    ptr: *anyopaque,
+
+    fn_draw: *const fn(ptr: *anyopaque, cmd: vk.CommandBuffer) void,
+
+    pub fn draw(self: *const Scene, cmd: vk.CommandBuffer) void {
+        self.fn_draw(self.ptr, cmd);
+    }
+
+    pub fn interface(comptime T: type, self: *T) Scene {
+        return .{
+            .ptr = self,
+            .fn_draw = &T.draw,
+        };
     }
 };
 
