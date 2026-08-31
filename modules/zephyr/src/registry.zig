@@ -124,7 +124,16 @@ fn parseCLiteralInt(raw: []const u8) ?i64 {
 // ---------------------------------------------------------------------------
 
 fn parseTypeSlot(body: []const u8, attrs: []const u8) ?model.Member {
-    const name = sliceBetween(body, "<name>", "</name>") orelse return null;
+    // Promoted-feature/property aggregate structs (e.g.
+    // VkPhysicalDeviceVulkan11Features) render their members as
+    // `<name alias="OriginalStruct::originalField">name</name>`, so the
+    // opening tag can't be matched as the literal `<name>` -- find its
+    // `<name` prefix and the `>` that closes that specific tag instead.
+    const name_tag_start = std.mem.indexOf(u8, body, "<name") orelse return null;
+    const name_tag_end = std.mem.indexOfPos(u8, body, name_tag_start, ">") orelse return null;
+    const name_content_start = name_tag_end + 1;
+    const name_content_end = std.mem.indexOfPos(u8, body, name_content_start, "</name>") orelse return null;
+    const name = body[name_content_start..name_content_end];
     const base = sliceBetween(body, "<type>", "</type>") orelse {
         // A few members have no <type> at all (e.g. plain `void* pUserData`
         // handled elsewhere) -- treat "void" textual members defensively.
@@ -133,9 +142,8 @@ fn parseTypeSlot(body: []const u8, attrs: []const u8) ?model.Member {
 
     const before_type = body[0 .. std.mem.indexOf(u8, body, "<type>").?];
     const type_close = std.mem.indexOf(u8, body, "</type>").? + "</type>".len;
-    const name_start = std.mem.indexOf(u8, body, "<name>").?;
-    const between = body[type_close..name_start];
-    const after_name_start = name_start + "<name>".len + name.len + "</name>".len;
+    const between = body[type_close..name_tag_start];
+    const after_name_start = name_content_end + "</name>".len;
     const after_name = if (after_name_start <= body.len) body[after_name_start..] else "";
 
     var pointer_depth: u2 = 0;
@@ -573,9 +581,19 @@ fn parseFeatureBlocks(arena: std.mem.Allocator, xml: []const u8, reg: *Registry_
         try scanEnumContributions(arena, reg, body, null);
 
         const feature_name = attrValue(header.attrs, "name") orelse "";
-        const is_baseline_block = std.mem.eql(u8, feature_name, "VK_VERSION_1_0");
-        const label = if (attrValue(header.attrs, "number")) |n|
-            try std.fmt.allocPrint(arena, "Vulkan {s}", .{n})
+        const number = attrValue(header.attrs, "number") orelse "";
+        // Recent vk.xml splits VK_VERSION_1_0 into several internal
+        // sub-features joined by `depends` -- VK_BASE_VERSION_1_0,
+        // VK_COMPUTE_VERSION_1_0 and VK_GRAPHICS_VERSION_1_0 each carry a
+        // slice of the "baseline" commands (e.g. vkCreateInstance lives in
+        // VK_BASE_VERSION_1_0, not VK_VERSION_1_0 itself). Matching on the
+        // literal name "VK_VERSION_1_0" alone missed those, wrongly gating
+        // baseline commands. All four number="1.0" blocks are unconditionally
+        // required together for the "vulkan" api (already filtered above),
+        // so classify by version number instead of by block name.
+        const is_baseline_block = std.mem.eql(u8, number, "1.0");
+        const label = if (number.len > 0)
+            try std.fmt.allocPrint(arena, "Vulkan {s}", .{number})
         else
             feature_name;
         try scanCommandContributions(arena, gating, body, is_baseline_block, label);
@@ -780,6 +798,13 @@ test "parseTypeSlot extracts pointer depth, const and array length" {
     try std.testing.expectEqual(@as(u2, 1), member.type.pointer_depth);
     try std.testing.expect(member.type.is_const);
     try std.testing.expect(member.type.is_optional);
+}
+
+test "parseTypeSlot handles aliased name tags from promoted feature structs" {
+    const body = "<type>VkBool32</type> <name alias=\"VkPhysicalDeviceShaderDrawParametersFeatures::shaderDrawParameters\">shaderDrawParameters</name>";
+    const member = parseTypeSlot(body, "").?;
+    try std.testing.expectEqualStrings("shaderDrawParameters", member.name);
+    try std.testing.expectEqualStrings("VkBool32", member.type.base);
 }
 
 test "parseTypeSlot extracts symbolic array length" {

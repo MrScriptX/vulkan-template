@@ -551,6 +551,30 @@ fn writeCommands(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const mo
     var device_level_gated: std.ArrayList([]const u8) = .empty;
     defer device_level_gated.deinit(gpa);
 
+    // Every command becomes a top-level `pub fn {zig_name}` wrapper (see
+    // below), so a parameter whose vk.xml name happens to match some other
+    // command's zig-cased name (e.g. a `signalSemaphore: Semaphore` param
+    // on a command other than vkSignalSemaphore) would shadow that
+    // declaration. Collect every zig-cased command name up front so
+    // parameter names can be disambiguated against the full set, regardless
+    // of where in `reg.commands` the colliding command appears.
+    var command_names: std.StringHashMapUnmanaged(void) = .empty;
+    defer {
+        var it = command_names.keyIterator();
+        while (it.next()) |k| gpa.free(k.*);
+        command_names.deinit(gpa);
+    }
+    {
+        var name_buf: [256]u8 = undefined;
+        for (reg.commands) |cmd| {
+            const zig_name = registry.zigCommandName(&name_buf, cmd.c_name);
+            if (!command_names.contains(zig_name)) {
+                const owned = try gpa.dupe(u8, zig_name);
+                try command_names.put(gpa, owned, {});
+            }
+        }
+    }
+
     for (reg.commands) |cmd| {
         var sig: std.ArrayList(u8) = .empty;
         defer sig.deinit(gpa);
@@ -563,7 +587,10 @@ fn writeCommands(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const mo
                 try sig.appendSlice(gpa, ", ");
                 try call_args.appendSlice(gpa, ", ");
             }
-            const field = zigFieldName(gpa, p.name);
+            var field = zigFieldName(gpa, p.name);
+            if (command_names.contains(field)) {
+                field = try std.fmt.allocPrint(gpa, "{s}_param", .{field});
+            }
             try sig.print(gpa, "{s}: ", .{field});
             if (!try writeFieldType(&sig, gpa, reg, universe, p.type)) {
                 ok = false;
