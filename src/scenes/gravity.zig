@@ -18,11 +18,13 @@ pub const GravityScene = struct {
             .objects = &.{
                 .{
                     .pos = .{ 0, 0 },
-                    .mass = 1
+                    .mass = 1,
+                    .velocity = 0
                 },
                 .{
-                    .pos = .{ 0, 0.5 },
-                    .mass = 1 
+                    .pos = .{ 0, 100 },
+                    .mass = 1 ,
+                    .velocity = 0
                 }
             },
             .delta_time = 0,
@@ -254,7 +256,9 @@ const Object = struct {
     /// Position in km
     pos: @Vector(2, f32),
     /// Mass in kg
-    mass: f32
+    mass: f32,
+    /// Velocity
+    velocity: f32
 };
 
 const GravityShader = struct {
