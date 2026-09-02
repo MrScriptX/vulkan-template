@@ -95,6 +95,10 @@ pub const RenderGraph = struct {
 
     pub fn exec(self: *RenderGraph, cmd: vk.CommandBuffer) void {
         for (self.passes.items) |pass| {
+            // image barriers            
+            var image_barriers = std.ArrayList(vk.ImageMemoryBarrier2).empty;
+            defer image_barriers.deinit(self.allocator);
+            
             for (pass.images.items) |res| {
                 const current = self.findImage(res.image) catch {
                     std.log.err("image resource not found. This should never happen", .{});
@@ -104,11 +108,47 @@ pub const RenderGraph = struct {
                 const src_layout = current.layout;
                 const dst_layout = res.layout;
 
-                utils.transition_image_layout(cmd, res.image.image, src_layout, dst_layout);
+                const aspect_mask: vk.ImageAspectFlags = if (src_layout == .depth_attachment_optimal) .{ .depth_bit = true } else .{ .color_bit = true };
+
+                const image_barrier = vk.ImageMemoryBarrier2 {
+		            .sType = .image_memory_barrier_2,
+
+		            .srcStageMask = .{ .all_commands_bit = true },
+		            .srcAccessMask = .{ .memory_write_bit = true },
+		            .dstStageMask = .{ .all_commands_bit = true },
+		            .dstAccessMask = .{ .memory_write_bit = true, .memory_read_bit = true },
+
+		            .oldLayout = src_layout,
+		            .newLayout = dst_layout,
+
+		            .image = res.image.image,
+		            .subresourceRange = vk.ImageSubresourceRange {
+		                .aspectMask = aspect_mask,
+		                .baseMipLevel = 0,
+		                .levelCount = c.VK_REMAINING_MIP_LEVELS,
+		                .baseArrayLayer = 0,
+		                .layerCount = c.VK_REMAINING_ARRAY_LAYERS,
+	                },
+	            };
+
+                image_barriers.append(self.allocator, image_barrier) catch {
+                    std.log.err("failed to allocate barrier.", .{});
+                    continue;
+                };
 
                 current.layout = dst_layout;
             }
 
+            const dep_info = vk.DependencyInfo {
+		        .sType = .dependency_info,
+
+		        .imageMemoryBarrierCount = @intCast(image_barriers.items.len),
+		        .pImageMemoryBarriers = image_barriers.items.ptr,
+	        };
+
+            vk.cmdPipelineBarrier2(cmd, &dep_info);
+
+            // buffer barriers
             var barriers = std.ArrayList(vk.BufferMemoryBarrier2).empty;
             defer barriers.deinit(self.allocator);
 
@@ -140,7 +180,7 @@ pub const RenderGraph = struct {
                 };
             }
 
-            const dependency = vk.DependencyInfo{
+            const dependency = vk.DependencyInfo {
                 .sType = .dependency_info,
                 .bufferMemoryBarrierCount = @intCast(barriers.items.len),
                 .pBufferMemoryBarriers = barriers.items.ptr,
