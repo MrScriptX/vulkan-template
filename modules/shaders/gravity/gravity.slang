@@ -17,7 +17,7 @@ static const float G = 0; // gravitational constant
 void main(uint3 threadId: SV_DispatchThreadID, uint3 localId: SV_GroupThreadID)
 {
     uint object_id = threadId.x;
-    float32_t dt = (float32_t(delta_time) / 1000.0 / 60.0);
+    float32_t dt = (float32_t(delta_time) / 1000000000.0); // seconde
 
     float2 velocity = float2(1, 0);
     objects[object_id].pos += velocity * dt;

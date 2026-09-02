@@ -192,6 +192,7 @@ fn compute_gravity(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
     vk.cmdBindDescriptorSets(cmd, .compute, ctx.pipeline.layout, 0, @intCast(ctx.descriptor_sets.len), ctx.descriptor_sets.ptr, 0, null);
     
     vk.cmdPushConstants2(cmd, &ctx.push_constant);
+    // vk.cmdPushConstants(cmd, ctx.push_constant.layout, ctx.push_constant.stageFlags, ctx.push_constant.offset, ctx.push_constant.size, ctx.push_constant.pValues);
 
     vk.cmdDispatch(cmd, ctx.dispatch_size[0], ctx.dispatch_size[1], ctx.dispatch_size[2]);
 }
@@ -247,6 +248,7 @@ fn render_objects(cmd: vk.CommandBuffer, ctx: *const render.Context) void {
     vk.cmdBindPipeline(cmd, .graphics, ctx.pipeline.handle);
     vk.cmdBindDescriptorSets(cmd, .graphics, ctx.pipeline.layout, 0, @intCast(ctx.descriptor_sets.len), ctx.descriptor_sets.ptr, 0, null);
     vk.cmdPushConstants2(cmd, &ctx.push_constant);
+    // vk.cmdPushConstants(cmd, ctx.push_constant.layout, ctx.push_constant.stageFlags, ctx.push_constant.offset, ctx.push_constant.size, ctx.push_constant.pValues);
     vk.cmdDraw(cmd, ctx.vertex_count, ctx.instance_count, 0, 0);
 
     vk.cmdEndRendering(cmd);
@@ -257,7 +259,7 @@ const Object = struct {
     pos: @Vector(2, f32),
     /// Mass in kg
     mass: f32,
-    /// Velocity
+    /// Velocity in km/h
     velocity: f32
 };
 
