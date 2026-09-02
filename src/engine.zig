@@ -7,75 +7,6 @@ const Layers = struct {
     VK_LAYER_KHRONOS_validation: bool,
 };
 
-const Image = struct {
-    allocation: c.VmaAllocation,
-    image: vk.Image,
-    image_view: vk.ImageView,
-    extent: vk.Extent3D,
-
-    pub fn init(allocator: c.VmaAllocator, device: vk.Device, format: vk.Format, extent: vk.Extent3D, usage: vk.ImageUsageFlags, aspect_mask: vk.ImageAspectFlags) !Image {
-        const image_create_info = vk.ImageCreateInfo {
-            .sType = .image_create_info,
-            .imageType = .@"2d",
-            .format = format,
-            .extent = extent,
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = .{ .@"1_bit" = true }, //for MSAA. we will not be using it by default, so default it to 1 sample per pixel.
-            .tiling = .optimal, // optimal tiling, which means the image is stored on the best gpu format
-            .usage = usage,
-        };
-
-        const alloc_create_info = c.VmaAllocationCreateInfo {
-            .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
-            .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        };
-
-        var allocation: c.VmaAllocation = undefined;
-        var c_image: c.VkImage = undefined;
-        vk_interop.vmaCreateImage(allocator, @ptrCast(&image_create_info), &alloc_create_info, &c_image, &allocation, null) catch |err| {
-            std.log.err("Failed to create image : {any}", .{err});
-            return err;
-        };
-        errdefer c.vmaDestroyImage(allocator, c_image, allocation);
-
-        const image = vk_interop.imageFromC(c_image);
-
-        const image_view_create_info = vk.ImageViewCreateInfo {
-            .sType = .image_view_create_info,
-            .viewType = .@"2d",
-            .image = image,
-            .format = format,
-            .subresourceRange = vk.ImageSubresourceRange {
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-                .aspectMask = aspect_mask,
-            }
-        };
-
-        var image_view: vk.ImageView = undefined;
-        vk.createImageView(device, &image_view_create_info, null, &image_view) catch |err| {
-            std.log.err("Failed to create image view : {any}", .{err});
-            return err;
-        };
-        errdefer vk.destroyImageView(device, image_view, null);
-
-        return .{
-            .allocation = allocation,
-            .image = image,
-            .image_view = image_view,
-            .extent = extent,
-        };
-    }
-
-    pub fn deinit(self: *const Image, device: vk.Device, allocator: c.VmaAllocator) void {
-        vk.destroyImageView(device, self.image_view, null);
-        c.vmaDestroyImage(allocator, vk_interop.imageToC(self.image), self.allocation);
-    }
-};
-
 const Frame = struct {
     command_pool: vk.CommandPool,
     command_buffer: vk.CommandBuffer,
@@ -309,7 +240,7 @@ const Swapchain = struct {
                 sw_mode = mode;
                 break;
             }
-            else if (mode == .immediate) { // segond meilleur si disponible
+            else if (mode == .immediate) { // second meilleur si disponible
                 sw_mode = mode;
             }
         }
@@ -415,16 +346,9 @@ pub const Renderer = struct {
 
     frames: []Frame,
 
-    render_image: Image, // image use to record scene command
-    depth_image: Image,
+    draw_resource: render.DrawResource,
 
-    descriptor_allocator: allocators.Descriptor, // per render image descriptor allocator
-    descriptor_set: vk.DescriptorSet,
-    descriptor_set_layout: vk.DescriptorSetLayout, 
-
-    pipeline: shaders.ComputePipeline,
-
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
+    pub fn init(allocator: std.mem.Allocator, app_name: [:0]const u8, window: *c.SDL_Window) !Renderer {
         const layers = Layers {
             .VK_LAYER_KHRONOS_validation = true // when debug
         };
@@ -477,69 +401,9 @@ pub const Renderer = struct {
         }
         errdefer for (0..frame_count) |i| frames[i].deinit(device);
 
-        // create the render images
-        const render_extent = vk.Extent3D {
-            .width = swapchain.extent.width,
-            .height = swapchain.extent.height,
-            .depth = 1
-        };
-
-        const render_image_usage: vk.ImageUsageFlags = .{ .transfer_src_bit = true, .storage_bit = true, .color_attachment_bit = true };
-
-        const render_image = Image.init(vma, device, .r16g16b16a16_sfloat, render_extent, render_image_usage, .{ .color_bit = true }) catch |err| {
-            std.log.err("failed to create render image", .{});
-            return err;
-        };
-        errdefer render_image.deinit(device, vma);
-
-        const depth_image = try Image.init(vma, device, .d32_sfloat, render_extent, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
-        errdefer depth_image.deinit(device, vma);
-
-        // create global descriptor allocator 
-        const pool_sizes = [_]descriptors.PoolSizeRatio {
-            .{ .kind = vk.DescriptorType.storage_image, .ratio = 1 }
-        };
-
-        var da = allocators.Descriptor.init(allocator, device, 12, &pool_sizes) catch |err| {
-            std.log.err("failed to create descriptor allocator.", .{});
-            return err;
-        };
-        errdefer da.deinit(device);
-
-        var layout_builder = descriptors.LayoutBuilder.init(allocator);
-        defer layout_builder.deinit();
-
-        const shader_stages: vk.ShaderStageFlags = .{
-            .compute_bit = true
-        };
-        try layout_builder.addBinding(0, .storage_image, shader_stages);
-        const descriptor_set_layout = try layout_builder.build(device, .{});
-        errdefer vk.destroyDescriptorSetLayout(device, descriptor_set_layout, null);
-
-        const descriptor_set = try da.allocate(descriptor_set_layout);
-
-        var descriptor_writer = descriptors.Writer.init(allocator);
-        defer descriptor_writer.deinit();
-
-        try descriptor_writer.addImage(0, render_image.image_view, std.mem.zeroes(vk.Sampler), .general, .storage_image);
-        descriptor_writer.write(device, descriptor_set);
-
-        // create a dummy compute pipeline for test
-        const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
-        defer allocator.free(exe_dir);
-
-        const shader_path = try std.fmt.allocPrint(allocator, "{s}/shaders/gradiant.spirv", .{ exe_dir });
-        defer allocator.free(shader_path);
-
-        const shader_module = try shaders.load_shader_module(io, allocator, shader_path, device);
-        defer vk.destroyShaderModule(device, shader_module, null);
-
-        const pipeline_layout_info = vk.PipelineLayoutCreateInfo {
-            .sType = .pipeline_layout_create_info,
-            .setLayoutCount = 1,
-            .pSetLayouts = &descriptor_set_layout
-        };
-        const pipeline = try shaders.ComputePipeline.init(device, pipeline_layout_info, shader_module);
+        // initialize draw resource
+        const draw_resource = try render.DrawResource.init(vma, device, window_extent.width, window_extent.height);
+        errdefer draw_resource.deinit(vma, device);
 
         return .{
             .instance = instance,
@@ -554,29 +418,14 @@ pub const Renderer = struct {
             .layers = layers,
 
             .frames = frames,
-            .render_image = render_image,
-            .depth_image = depth_image,
-
-            .descriptor_allocator = da,
-            .descriptor_set_layout = descriptor_set_layout,
-            .descriptor_set = descriptor_set,
-
-            .pipeline = pipeline
+            .draw_resource = draw_resource
         };
     }
 
     pub fn deinit(self: *Renderer, allocator: std.mem.Allocator) void {
-        vk.deviceWaitIdle(self.device) catch |err| {
-            std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
-        };
+        self.stop();
 
-        self.pipeline.deinit();
-
-        self.descriptor_allocator.deinit(self.device);
-        vk.destroyDescriptorSetLayout(self.device, self.descriptor_set_layout, null);
-
-        self.depth_image.deinit(self.device, self.vma);
-        self.render_image.deinit(self.device, self.vma);
+        self.draw_resource.deinit(self.vma, self.device);
 
         for (0..self.frames.len) |i| {
             self.frames[i].deinit(self.device);
@@ -591,7 +440,14 @@ pub const Renderer = struct {
         vk.destroyInstance(self.instance, null);
     }
 
-    pub fn draw(self: *const Renderer, frame_index: u32, scene: *gradiant.GradiantScene) !void {
+    /// Wait for the renderer to complete all tasks
+    pub fn stop(self: *const Renderer) void {
+        vk.deviceWaitIdle(self.device) catch |err| {
+            std.log.err("Failed to wait for device idle on renderer shutdown : {any}", .{err});
+        };
+    }
+
+    pub fn draw(self: *const Renderer, frame_index: u32, scene: *const Scene) !void {
         const frame = &self.frames[frame_index];
 
         vk.waitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, std.math.maxInt(u64)) catch |err| {
@@ -618,39 +474,20 @@ pub const Renderer = struct {
 
         scene.draw(cmd);
 
-        transition_image_layout(cmd, self.render_image.image, .@"undefined", .general);
-
-        // draw background
-        vk.cmdBindPipeline(cmd, .compute, self.pipeline.handle);
-
-        vk.cmdBindDescriptorSets(cmd, .compute, self.pipeline.layout, 0, 1, &self.descriptor_set, 0, null);
-
-        const group_x = self.render_image.extent.width / 16;
-        const group_y = self.render_image.extent.height / 16;
-        vk.cmdDispatch(cmd, group_x, group_y, 1);
-
-        transition_image_layout(cmd, self.render_image.image, .general, .color_attachment_optimal);
-        transition_image_layout(cmd, self.depth_image.image, .@"undefined", .depth_attachment_optimal);
-
-        // draw scene
-
-        transition_image_layout(cmd, self.render_image.image, .color_attachment_optimal, .transfer_src_optimal);
-
-
         // copy draw image to swapchain image
-        transition_image_layout(cmd, self.swapchain.images[image_index], .@"undefined", .transfer_dst_optimal);
+        utils.transition_image_layout(cmd, self.swapchain.images[image_index], .@"undefined", .transfer_dst_optimal);
 
         const render_image_extent = vk.Extent2D {
-            .width = self.render_image.extent.width,
-            .height = self.render_image.extent.height,
+            .width = self.draw_resource.color_image.extent.width,
+            .height = self.draw_resource.color_image.extent.height,
         };
-        blit_image(cmd, self.render_image.image, self.swapchain.images[image_index], render_image_extent, self.swapchain.extent);
+        blit_image(cmd, self.draw_resource.color_image.image, self.swapchain.images[image_index], render_image_extent, self.swapchain.extent);
 
-        transition_image_layout(cmd, self.swapchain.images[image_index], .transfer_dst_optimal, .color_attachment_optimal);
+        utils.transition_image_layout(cmd, self.swapchain.images[image_index], .transfer_dst_optimal, .color_attachment_optimal);
 
         // draw engine GUI
 
-        transition_image_layout(cmd, self.swapchain.images[image_index], .color_attachment_optimal, .present_src_khr);
+        utils.transition_image_layout(cmd, self.swapchain.images[image_index], .color_attachment_optimal, .present_src_khr);
 
         // end recording
         // submit command buffer
@@ -766,16 +603,37 @@ pub const Renderer = struct {
     }
 
     pub fn rebuild_swapchain(self: *Renderer, allocator: std.mem.Allocator, window: *c.SDL_Window) !void {
-        vk.deviceWaitIdle(self.device) catch |err| {
-            std.log.warn("Wait for device idle raised an error : {any}", .{err});
-        };
+        self.stop();
 
+        self.draw_resource.deinit(self.vma, self.device);
+        
         // clean up swapchain & resources
         self.swapchain.deinit(self.device);
 
         // build swapchain
         const window_extent = current_window_extent(window) catch vk.Extent2D { .width = 400, .height = 400 }; // try with min res
         self.swapchain = try Swapchain.init(allocator, self.device, self.gpu, self.surface, window_extent);
+        errdefer self.swapchain.deinit(self.device);
+
+        self.draw_resource = try render.DrawResource.init(self.vma, self.device, window_extent.width, window_extent.height);
+    }
+};
+
+/// Generic interface to pass a scene to the renderer
+pub const Scene = struct {
+    ptr: *anyopaque,
+
+    fn_draw: *const fn(ptr: *anyopaque, cmd: vk.CommandBuffer) void,
+
+    pub fn draw(self: *const Scene, cmd: vk.CommandBuffer) void {
+        self.fn_draw(self.ptr, cmd);
+    }
+
+    pub fn interface(comptime T: type, self: *T) Scene {
+        return .{
+            .ptr = self,
+            .fn_draw = &T.draw,
+        };
     }
 };
 
@@ -1071,8 +929,14 @@ fn create_device(allocator: std.mem.Allocator, physical_device: vk.PhysicalDevic
         .fillModeNonSolid = c.VK_TRUE,
     };
 
+    const features_vulkan11 = vk.PhysicalDeviceVulkan11Features {
+        .sType = .physical_device_vulkan_1_1_features,
+        .shaderDrawParameters = c.VK_TRUE,
+    };
+
     const features_vulkan12 = vk.PhysicalDeviceVulkan12Features {
         .sType = .physical_device_vulkan_1_2_features,
+        .pNext = @constCast(@ptrCast(&features_vulkan11)),
         .bufferDeviceAddress = c.VK_TRUE,
     };
 
@@ -1080,6 +944,7 @@ fn create_device(allocator: std.mem.Allocator, physical_device: vk.PhysicalDevic
         .sType = .physical_device_vulkan_1_3_features,
         .pNext = @constCast(@ptrCast(&features_vulkan12)),
         .synchronization2 = if (extensions.VK_KHR_synchronization2) c.VK_TRUE else c.VK_FALSE,
+        .dynamicRendering = c.VK_TRUE,
     };
 
     // layers
@@ -1184,40 +1049,6 @@ fn current_window_extent(window: *c.SDL_Window) !vk.Extent2D {
     return extent;
 }
 
-fn transition_image_layout(cmd: vk.CommandBuffer, image: vk.Image, current_layout: vk.ImageLayout, new_layout: vk.ImageLayout) void {
-    const aspect_mask: vk.ImageAspectFlags = if (new_layout == .depth_attachment_optimal) .{ .depth_bit = true } else .{ .color_bit = true };
-
-	const image_barrier = vk.ImageMemoryBarrier2 {
-		.sType = .image_memory_barrier_2,
-
-		.srcStageMask = .{ .all_commands_bit = true },
-		.srcAccessMask = .{ .memory_write_bit = true },
-		.dstStageMask = .{ .all_commands_bit = true },
-		.dstAccessMask = .{ .memory_write_bit = true, .memory_read_bit = true },
-
-		.oldLayout = current_layout,
-		.newLayout = new_layout,
-
-		.image = image,
-		.subresourceRange = vk.ImageSubresourceRange {
-		    .aspectMask = aspect_mask,
-		    .baseMipLevel = 0,
-		    .levelCount = c.VK_REMAINING_MIP_LEVELS,
-		    .baseArrayLayer = 0,
-		    .layerCount = c.VK_REMAINING_ARRAY_LAYERS,
-	    },
-	};
-
-	const dep_info = vk.DependencyInfo {
-		.sType = .dependency_info,
-
-		.imageMemoryBarrierCount = 1,
-		.pImageMemoryBarriers = &image_barrier,
-	};
-
-    vk.cmdPipelineBarrier2(cmd, &dep_info);
-}
-
 fn blit_image(cmd: vk.CommandBuffer, source: vk.Image, destination: vk.Image, srcSize: vk.Extent2D, dstSize: vk.Extent2D) void {
     const empty_offset = vk.Offset3D {
         .x = 0,
@@ -1292,5 +1123,6 @@ const vk_interop = @import("graphics/vk_interop.zig");
 const allocators = @import("graphics/allocators.zig");
 const descriptors = @import("graphics/descriptors.zig");
 const shaders = @import("graphics/shaders.zig");
-
-const gradiant = @import("scenes/gradiant.zig");
+const types = @import("graphics/types.zig");
+const utils = @import("graphics/utils.zig");
+const render = @import("render.zig");

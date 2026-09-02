@@ -71,12 +71,7 @@ pub const Descriptor = struct {
             std.log.err("failed to fetch a descriptor pool. error : {any}", .{ err });
             return err;
         };
-        defer {
-            self.full_pools.append(self.allocator, pool) catch |err| {
-                std.log.err("failed to set pool to full pool. error : {any}", .{ err });
-            };
-        }
-
+ 
         const create_set_info = vk.DescriptorSetAllocateInfo {
             .sType = vk.StructureType.descriptor_set_allocate_info,
             .descriptorPool = pool,
@@ -86,10 +81,20 @@ pub const Descriptor = struct {
 
         var descriptor_set: vk.DescriptorSet = undefined;
         vk.allocateDescriptorSets(self.device, &create_set_info, &descriptor_set) catch |err| {
-            std.log.err("failed to allocate descriptor sets. error : {any}", .{ err });
-            return err;
+            if (err == vk.Error.OutOfPoolMemory or err == vk.Error.FragmentedPool) {
+                try self.full_pools.append(self.allocator, pool);
+                return try self.allocate(layout); // try with a new pool
+            }
+            else {
+                try self.ready_pools.append(self.allocator, pool);
+
+                std.log.err("failed to allocate descriptor set. error : {any}", .{err});
+                return err;
+            }
         };
 
+        try self.ready_pools.append(self.allocator, pool);
+        
         return descriptor_set;
     }
 };

@@ -14,6 +14,8 @@ pub const Error = error {
     NotReady,
     SuboptimalKHR,
     Timeout,
+    OutOfPoolMemory,
+    FragmentedPool,
     Unknown
 };
 
@@ -42,7 +44,8 @@ pub fn check_result(result: Result) Error!void {
         .error_full_screen_exclusive_mode_lost_ext => return Error.FullScreenExclusiveModeLostExt,
         .error_out_of_date_khr => return Error.OutOfDateKHR,
         .error_surface_lost_khr => return Error.SurfaceLostKHR,
-        .error_validation_failed => return Error.ValidationFailed,
+        .error_out_of_pool_memory => return Error.OutOfPoolMemory,
+        .error_fragmented_pool => return Error.FragmentedPool,
         else => return Error.Unknown,
     }
 }

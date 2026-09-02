@@ -21,13 +21,17 @@ pub fn main(proc: std.process.Init) !void {
         std.log.debug("Memory check : {any}\n", .{ status });
     }
 
-    var renderer = engine.Renderer.init(proc.io, allocator, "Vulkan Template", window.?) catch {
+    var renderer = engine.Renderer.init(allocator, "Vulkan Template", window.?) catch {
         std.log.err("Renderer initialization failed", .{});
         return;
     };
     defer renderer.deinit(allocator);
 
-    var app = Engine.init(&renderer);
+    var app = Engine.init(allocator, proc.io, &renderer) catch |e| {
+        std.log.err("failed to init engine", .{});
+        return e;
+    };
+    defer app.deinit(allocator);
 
     var quit = false;
     while (!quit) {
@@ -64,27 +68,54 @@ pub fn main(proc: std.process.Init) !void {
 const Engine = struct {
     frame_count: u32 = 0,
     renderer: *const engine.Renderer,
-    scene: scenes.GradiantScene,
+    
+    gradiant_scene: scenes.GradiantScene,
+    gravity_scene: *gravity.GravityScene,
 
-    pub fn init(renderer: *const engine.Renderer) Engine {
+    live_scene: engine.Scene,
+    clock: Clock,
+
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, renderer: *const engine.Renderer) !Engine {
+        const gradiant_scene = try scenes.GradiantScene.init(allocator, io, renderer.device);
+        
+        const gravity_scene = try allocator.create(gravity.GravityScene);
+        gravity_scene.* = try gravity.GravityScene.init(allocator, io, renderer.device, renderer.vma);
+
         return .{
             .renderer = renderer,
-            .scene = scenes.GradiantScene.init()
+            .gradiant_scene = gradiant_scene,
+            .gravity_scene = gravity_scene,
+            .live_scene = engine.Scene.interface(gravity.GravityScene, gravity_scene),
+            .clock = Clock.init(io)
         };
     }
 
     pub fn draw(self: *Engine) !void {
+        const dt = self.clock.ns_delta_time();
         const frame_index = self.frame_count % @as(u32, @intCast(self.renderer.frames.len));
-        try self.renderer.draw(frame_index, &self.scene);
+
+        // try self.gradiant_scene.update(allocator, &self.renderer.draw_resource);
+        try self.gravity_scene.update(dt, &self.renderer.draw_resource);
+
+        try self.renderer.draw(frame_index, &self.live_scene);
         self.frame_count += 1;
     }
 
-    pub fn deinit(self: *Engine) void {
-        self.scene.deinit();
+    pub fn deinit(self: *Engine, allocator: std.mem.Allocator) void {
+        self.renderer.stop();
+
+        self.gravity_scene.deinit(self.renderer.vma, self.renderer.device);
+        allocator.destroy(self.gravity_scene);
+
+        self.gradiant_scene.deinit(self.renderer.device);
     }
 };
 
 const std = @import("std");
 const c = @import("c");
+const vk = @import("vk");
 const engine = @import("engine.zig");
+const Clock = @import("Clock.zig");
 const scenes = @import("scenes/gradiant.zig");
+const gravity = @import("scenes/gravity.zig");
+const render = @import("render.zig");
