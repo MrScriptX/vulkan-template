@@ -11,6 +11,14 @@ pub fn build(b: *std.Build) void {
         break :blk .{ .cwd_relative = b.fmt("{s}/share/vulkan/registry/vk.xml", .{vk_sdk_path}) };
     };
 
+    // Pure-Zig XML pull parser (ianprime0509/zig-xml). vk.xml is parsed with
+    // a real conforming parser rather than substring scanning, so malformed
+    // input yields error.MalformedXml with a location instead of a panic.
+    const xml_dep = b.dependency("xml", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Public library module: the generator's own parser/emitter, reusable
     // by anything that wants to run it programmatically (and what fixes
     // this file's previously-dangling `@import("zephyr")`).
@@ -18,6 +26,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/zephyr.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "xml", .module = xml_dep.module("xml") },
+        },
     });
 
     // CLI entry point: `vk_generator <vk.xml path> <output vk.zig path>`.

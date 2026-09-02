@@ -116,7 +116,14 @@ fn registryMapPrimitive(c_name: []const u8) ?[]const u8 {
 
 fn resolveArrayLen(reg: *const model.Registry, raw: []const u8) ?i64 {
     if (std.fmt.parseInt(i64, raw, 10)) |v| return v else |_| {}
-    return reg.constants.get(raw);
+    // Symbolic lengths always name an integer constant; a float one would be
+    // a malformed registry rather than something to round.
+    return switch (reg.constants.get(raw) orelse return null) {
+        .uint32 => |v| @intCast(v),
+        .uint64 => |v| std.math.cast(i64, v),
+        .int => |v| v,
+        .float => null,
+    };
 }
 
 /// Renders one member/param's Zig field type into `w`. Returns `false`
@@ -262,6 +269,31 @@ pub fn write(gpa: std.mem.Allocator, reg: *const model.Registry, out: *std.Array
     try writeEnums(gpa, out, reg, &seen);
     try writeAggregates(gpa, out, reg, &universe, &seen);
     try writeCommands(gpa, out, reg, &universe, &seen);
+    // Last, so that a constant whose stripped name collides with a type never
+    // displaces the type -- types are what the rest of the codebase names.
+    try writeConstants(gpa, out, reg, &seen);
+}
+
+/// The `<enums type="constants">` block: `VK_UUID_SIZE` and friends. These are
+/// emitted with their declared C type, so the float constants
+/// (VK_LOD_CLAMP_NONE, the VK_COMPUTE_OCCUPANCY_PRIORITY_*_NV set) come
+/// through as `f32` rather than being dropped for not fitting an integer.
+fn writeConstants(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const model.Registry, seen: *Seen) !void {
+    var it = reg.constants.iterator();
+    while (it.next()) |entry| {
+        const name = registry.zigConstantName(entry.key_ptr.*);
+        if (!try seen.tryReserve(gpa, name)) {
+            std.log.warn("vk_generator: skipping constant '{s}' (name already taken)", .{name});
+            continue;
+        }
+        switch (entry.value_ptr.*) {
+            .uint32 => |v| try out.print(gpa, "pub const {s}: u32 = {d};\n", .{ name, v }),
+            .uint64 => |v| try out.print(gpa, "pub const {s}: u64 = {d};\n", .{ name, v }),
+            .int => |v| try out.print(gpa, "pub const {s}: i64 = {d};\n", .{ name, v }),
+            .float => |v| try out.print(gpa, "pub const {s}: f32 = {d};\n", .{ name, v }),
+        }
+    }
+    try out.appendSlice(gpa, "\n");
 }
 
 fn writeHandles(gpa: std.mem.Allocator, out: *std.ArrayList(u8), reg: *const model.Registry, seen: *Seen) !void {

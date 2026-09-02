@@ -67,8 +67,10 @@ pub const Command = struct {
 
 pub const Registry = struct {
     arena: std.heap.ArenaAllocator,
-    /// Name -> value, from `<enums name="API Constants">` plus VK_TRUE/VK_FALSE etc.
-    constants: std.StringHashMapUnmanaged(i64) = .empty,
+    /// Name -> value, from `<enums type="constants">` (the "API Constants"
+    /// block). Insertion-ordered so the emitted constants keep the registry's
+    /// own order rather than a hash order that shifts between runs.
+    constants: std.StringArrayHashMapUnmanaged(Value) = .empty,
     /// Name -> underlying primitive Zig type, from `<type category="basetype">`.
     basetypes: std.StringHashMapUnmanaged([]const u8) = .empty,
     handles: []Handle = &.{},
@@ -79,4 +81,16 @@ pub const Registry = struct {
     pub fn deinit(self: *Registry) void {
         self.arena.deinit();
     }
+};
+
+/// One "API Constants" entry, typed by vk.xml's `type` attribute. The
+/// distinction matters: the previous integer-only representation silently
+/// dropped every `type="float"` constant (VK_LOD_CLAMP_NONE and friends)
+/// because they don't fit an i64.
+pub const Value = union(enum) {
+    uint32: u32,
+    uint64: u64,
+    float: f32,
+    /// A value with no `type` attribute, or a negative one.
+    int: i64,
 };
