@@ -582,6 +582,7 @@ fn parseEnumsBlock(c: *Cursor, registry: *model.Registry, reg: *Registry_) !void
     const bitwidth = try c.attrDup("bitwidth");
 
     const bt = block_type orelse {
+        std.log.warn("no block type found.", .{});
         try c.skip();
         return;
     };
@@ -589,13 +590,18 @@ fn parseEnumsBlock(c: *Cursor, registry: *model.Registry, reg: *Registry_) !void
 
     const is_bitmask = eql(bt, "bitmask");
     if (!is_bitmask and !eql(bt, "enum")) {
+        std.log.info("enums block skipped. name {any}", .{ block_name });
+
         try c.skip();
         return;
     }
+
     const name = block_name orelse {
+        std.log.warn("No name found for enums block.", .{});
         try c.skip();
         return;
     };
+
     const bit_width: u8 = if (bitwidth) |w| (std.fmt.parseInt(u8, w, 10) catch 32) else 32;
     const builder = try reg.builderFor(name, is_bitmask, bit_width);
 
