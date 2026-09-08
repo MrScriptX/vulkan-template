@@ -383,7 +383,8 @@ fn parseType(gpa: std.mem.Allocator, c: *Cursor, registry: *model.Registry, reg:
         const n = name orelse name_attr orelse return;
 
         try handles.append(c.arena, .{ .name = try gpa.dupe(u8, n), .dispatchable = dispatchable });
-    } else if (eql(cat, "bitmask")) {
+    } 
+    else if (eql(cat, "bitmask")) {
         // typedef <type>VkFlags</type> <name>VkImageUsageFlags</name>;
         var inner: ?[]const u8 = null;
         var flags_name: ?[]const u8 = null;
@@ -404,7 +405,8 @@ fn parseType(gpa: std.mem.Allocator, c: *Cursor, registry: *model.Registry, reg:
         if (requires orelse bitvalues) |bits_name| {
             try reg.flag_bits_to_flags.put(c.arena, bits_name, n);
         }
-    } else if (eql(cat, "struct") or eql(cat, "union")) {
+    } 
+    else if (eql(cat, "struct") or eql(cat, "union")) {
         const n = name_attr orelse {
             try c.skip();
             return;
@@ -422,13 +424,15 @@ fn parseType(gpa: std.mem.Allocator, c: *Cursor, registry: *model.Registry, reg:
             .is_union = eql(cat, "union"),
             .members = try members.toOwnedSlice(c.arena),
         });
-    } else if (eql(cat, "enum")) {
+    } 
+    else if (eql(cat, "enum")) {
         // Forward declaration; the values arrive in a top-level <enums> block.
         // Usually self-closing, occasionally an empty body -- with a real
         // parser both look identical, so there is only one path.
         if (name_attr) |n| _ = try reg.builderFor(n, false, 32);
         try c.skip();
-    } else {
+    } 
+    else {
         // "include", "define", "funcpointer".
         try c.skip();
     }
