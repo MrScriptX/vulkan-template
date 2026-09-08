@@ -367,12 +367,13 @@ fn parseType(gpa: std.mem.Allocator, c: *Cursor, registry: *model.Registry, reg:
         // default to non-dispatchable (u64), as the old scanner did.
         var dispatchable = false;
         var saw_macro = false;
+        
         while (try c.nextChild()) |child| {
             if (eql(child, "type") and !saw_macro) {
                 saw_macro = true;
                 dispatchable = !eql(try c.r.readElementText(), "VK_DEFINE_NON_DISPATCHABLE_HANDLE");
             } 
-            else if (eql(child, "name")) {
+            else if (eql(child, "name") and name == null) {
                 name = try c.text();
             } 
             else {

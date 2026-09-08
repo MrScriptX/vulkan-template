@@ -23,6 +23,10 @@ pub const Member = struct {
 pub const EnumValue = struct {
     name: []const u8,
     value: i64,
+
+    pub fn deinit(self: *EnumValue, gpa: std.mem.Allocator) void {
+        gpa.free(self.name);
+    }
 };
 
 pub const Handle = struct {
@@ -39,6 +43,13 @@ pub const EnumType = struct {
     is_bitmask: bool,
     bit_width: u8, // 32 or 64
     values: []EnumValue,
+
+    pub fn deinit(self: *EnumType, gpa: std.mem.Allocator) void {
+        gpa.free(self.name);
+        for (self.values) |value| {
+            value.deinit(gpa);
+        }
+    }
 };
 
 pub const AggType = struct {
