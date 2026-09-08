@@ -38,8 +38,14 @@ const Cursor = struct {
     }
 
     /// Text content of the current element, duped. Consumes the element.
-    fn textDup(c: *Cursor) ![]const u8 {
-        return try c.arena.dupe(u8, try c.r.readElementText());
+    fn textDup(self: *Cursor) ![]const u8 {
+        return try self.arena.dupe(u8, try self.r.readElementText());
+    }
+
+    /// Returns the element text. Consumes the element.
+    /// Caller does not owned the memory. 
+    fn text(self: *Cursor) ![]const u8 {
+        return try self.r.readElementText();
     }
 
     /// Consumes the current element and everything inside it.
@@ -366,8 +372,8 @@ fn parseType(gpa: std.mem.Allocator, c: *Cursor, registry: *model.Registry, reg:
                 saw_macro = true;
                 dispatchable = !eql(try c.r.readElementText(), "VK_DEFINE_NON_DISPATCHABLE_HANDLE");
             } 
-            else if (eql(child, "name") and name == null) {
-                name = try c.textDup();
+            else if (eql(child, "name")) {
+                name = try c.text();
             } 
             else {
                 try c.skip();
