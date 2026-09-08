@@ -238,7 +238,8 @@ const CommandGating = struct {
 /// into the returned registry's arena.
 pub fn parse(gpa: std.mem.Allocator, xml_text: []const u8) !model.Registry {
     var registry = model.Registry{ .arena = std.heap.ArenaAllocator.init(gpa) };
-    errdefer registry.deinit();
+    errdefer registry.deinit(gpa);
+
     const arena = registry.arena.allocator();
 
     var doc: xml.Reader.Static = .init(gpa, xml_text, .{ .namespace_aware = false });
@@ -254,7 +255,7 @@ pub fn parse(gpa: std.mem.Allocator, xml_text: []const u8) !model.Registry {
     try c.r.skipProlog(); // positions on <registry>
     while (try c.nextChild()) |tag| {
         if (eql(tag, "types")) {
-            try parseTypes(&c, &registry, &reg, &handles, &aggregates);
+            try parseTypes(gpa, &c, &registry, &reg, &handles, &aggregates);
         } else if (eql(tag, "enums")) {
             try parseEnumsBlock(&c, &registry, &reg);
         } else if (eql(tag, "commands")) {
@@ -304,29 +305,20 @@ pub fn parse(gpa: std.mem.Allocator, xml_text: []const u8) !model.Registry {
 // definitions (with full member lists), basetype typedefs.
 // ---------------------------------------------------------------------------
 
-fn parseTypes(
-    c: *Cursor,
-    registry: *model.Registry,
-    reg: *Registry_,
-    handles: *std.ArrayList(model.Handle),
-    aggregates: *std.ArrayList(model.AggType),
+fn parseTypes(gpa: std.mem.Allocator, c: *Cursor, registry: *model.Registry, reg: *Registry_,
+    handles: *std.ArrayList(model.Handle), aggregates: *std.ArrayList(model.AggType),
 ) !void {
     while (try c.nextChild()) |tag| {
         if (eql(tag, "type")) {
-            try parseType(c, registry, reg, handles, aggregates);
+            try parseType(gpa, c, registry, reg, handles, aggregates);
         } else {
             try c.skip();
         }
     }
 }
 
-fn parseType(
-    c: *Cursor,
-    registry: *model.Registry,
-    reg: *Registry_,
-    handles: *std.ArrayList(model.Handle),
-    aggregates: *std.ArrayList(model.AggType),
-) !void {
+fn parseType(gpa: std.mem.Allocator, c: *Cursor, registry: *model.Registry, reg: *Registry_,
+    handles: *std.ArrayList(model.Handle), aggregates: *std.ArrayList(model.AggType)) !void {
     // Attributes have to be read up front: the first child `read()`
     // invalidates them.
     const is_alias = c.hasAttr("alias");
@@ -360,9 +352,11 @@ fn parseType(
         const i = inner orelse return;
         const zig_base = mapPrimitive(i) orelse return;
         try registry.basetypes.put(c.arena, n, zig_base);
-    } else if (eql(cat, "handle")) {
+    } 
+    else if (eql(cat, "handle")) {
         // <type>VK_DEFINE_HANDLE</type>(<name>VkInstance</name>)
         var name: ?[]const u8 = null;
+        
         // A handle declared without a body carries no macro to inspect;
         // default to non-dispatchable (u64), as the old scanner did.
         var dispatchable = false;
@@ -371,14 +365,18 @@ fn parseType(
             if (eql(child, "type") and !saw_macro) {
                 saw_macro = true;
                 dispatchable = !eql(try c.r.readElementText(), "VK_DEFINE_NON_DISPATCHABLE_HANDLE");
-            } else if (eql(child, "name") and name == null) {
+            } 
+            else if (eql(child, "name") and name == null) {
                 name = try c.textDup();
-            } else {
+            } 
+            else {
                 try c.skip();
             }
         }
+        
         const n = name orelse name_attr orelse return;
-        try handles.append(c.arena, .{ .name = n, .dispatchable = dispatchable });
+
+        try handles.append(c.arena, .{ .name = try gpa.dupe(u8, n), .dispatchable = dispatchable });
     } else if (eql(cat, "bitmask")) {
         // typedef <type>VkFlags</type> <name>VkImageUsageFlags</name>;
         var inner: ?[]const u8 = null;

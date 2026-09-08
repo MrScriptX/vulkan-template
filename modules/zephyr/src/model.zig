@@ -28,6 +28,10 @@ pub const EnumValue = struct {
 pub const Handle = struct {
     name: []const u8,
     dispatchable: bool,
+
+    pub fn deinit(self: *Handle, gpa: std.mem.Allocator) void {
+        gpa.free(self.name);
+    }
 };
 
 pub const EnumType = struct {
@@ -78,7 +82,10 @@ pub const Registry = struct {
     aggregates: []AggType = &.{},
     commands: []Command = &.{},
 
-    pub fn deinit(self: *Registry) void {
+    pub fn deinit(self: *Registry, gpa: std.mem.Allocator) void {
+        for (self.handles) |*h| {
+            h.deinit(gpa);
+        }
         self.arena.deinit();
     }
 };
