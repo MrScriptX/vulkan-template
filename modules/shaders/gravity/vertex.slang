@@ -21,7 +21,8 @@ struct PushConstant
 [push_constant]
 PushConstant pc;
 
-static const float scale = 10.0;
+static const float unit_scale = 1000000;
+static const float scale = 10.0 * unit_scale;
 
 [shader("vertex")]
 VSOutput main(uint vertexId: SV_VertexID, uint instanceId: SV_InstanceID)
@@ -46,13 +47,13 @@ VSOutput main(uint vertexId: SV_VertexID, uint instanceId: SV_InstanceID)
     float2 camera_space = object.pos - pc.camera_pos;
 
     // World → NDC.
-    float2 ndc = camera_space / (pc.world_size * 0.5);
+    float2 ndc = camera_space / (pc.world_size * unit_scale * 0.5);
 
     // Mass determines the radius.
     float radius = object.mass * scale;
 
     // Convert from pixel-like radius to NDC.
-    float2 radius_ndc = radius / (pc.world_size * 0.5);
+    float2 radius_ndc = radius / (pc.world_size * unit_scale * 0.5);
     ndc += local * radius_ndc;
 
     VSOutput output;

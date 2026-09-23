@@ -2,7 +2,7 @@ struct Object
 {
     float2 pos; // in km
     float mass; // in kg
-    float velocity; // in km/h
+    float velocity; // in km/s
 }
 
 [push_constant]
@@ -10,7 +10,7 @@ int32_t delta_time;
 
 RWStructuredBuffer<Object> objects;
 
-static const float G = 0; // gravitational constant
+static const float G = 6.67430 * 0.00000000001; // gravitational constant
 
 [shader("compute")]
 [numthreads(1, 1, 1)]
@@ -19,7 +19,7 @@ void main(uint3 threadId: SV_DispatchThreadID, uint3 localId: SV_GroupThreadID)
     uint object_id = threadId.x;
     float32_t dt = (float32_t(delta_time) / 1000000000.0); // seconde
 
-    float2 velocity = float2(1, 0);
+    float2 velocity = float2(0, 0);
     objects[object_id].pos += velocity * dt;
 
     float2 p1 = float2(0); // new position
